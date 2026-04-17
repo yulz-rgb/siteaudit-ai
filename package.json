@@ -7,7 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "validate": "npm run test && npm run lint && npm run build",
+    "doctor": "node scripts/doctor.mjs",
+    "preflight": "npm run doctor && npm run validate",
+    "preview": "npm run validate && npx vercel",
+    "ship": "npm run validate && npx vercel --prod"
   },
   "dependencies": {
     "@sparticuz/chromium": "^123.0.1",
