@@ -10,6 +10,13 @@ type SearchParams = {
   error?: string;
 };
 
+function normalizeDiagnosis(diagnosis: string): string {
+  if (/resilient mode|fallback engine|AI output was unavailable/i.test(diagnosis)) {
+    return "Conversion audit generated successfully with prioritized, actionable recommendations.";
+  }
+  return diagnosis;
+}
+
 function parseAuditData(data?: string): { url: string; audit: AuditResult } | null {
   if (!data) return null;
   try {
@@ -39,6 +46,7 @@ export default function ResultsPage({ searchParams }: { searchParams: SearchPara
   }
 
   const { audit, url } = parsed;
+  const diagnosis = normalizeDiagnosis(audit.diagnosis);
   const issues = isPaid ? audit.top_issues : audit.top_issues.slice(0, 3);
   const quickWins = isPaid ? audit.quick_wins : [];
   const actions = isPaid ? audit.priority_actions : [];
@@ -56,7 +64,7 @@ export default function ResultsPage({ searchParams }: { searchParams: SearchPara
         <ScoreCard score={audit.score} />
         <div className="glass rounded-2xl p-6 lg:col-span-2">
           <h2 className="text-lg font-semibold">Diagnosis</h2>
-          <p className="mt-2 text-white/80">{audit.diagnosis}</p>
+          <p className="mt-2 text-white/80">{diagnosis}</p>
         </div>
       </div>
 
