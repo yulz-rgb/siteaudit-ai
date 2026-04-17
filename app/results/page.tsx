@@ -17,10 +17,36 @@ function normalizeDiagnosis(diagnosis: string): string {
 
 function parseAuditData(data?: string): { url: string; audit: AuditResult } | null {
   if (!data) return null;
+  const tryParse = (value: string) => {
+    const parsed = JSON.parse(value) as { url?: string; audit?: AuditResult };
+    if (!parsed?.url || !parsed?.audit) return null;
+    return { url: parsed.url, audit: parsed.audit };
+  };
+
   try {
-    return JSON.parse(decodeURIComponent(data));
-  } catch {
+    const decoded = decodeURIComponent(data);
+    const direct = tryParse(decoded);
+    if (direct) return direct;
+
+    const start = decoded.indexOf("{");
+    const end = decoded.lastIndexOf("}");
+    if (start !== -1 && end !== -1 && end > start) {
+      return tryParse(decoded.slice(start, end + 1));
+    }
     return null;
+  } catch {
+    try {
+      const normalized = data.replace(/\+/g, "%20");
+      const decoded = decodeURIComponent(normalized);
+      const start = decoded.indexOf("{");
+      const end = decoded.lastIndexOf("}");
+      if (start !== -1 && end !== -1 && end > start) {
+        return tryParse(decoded.slice(start, end + 1));
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 }
 
