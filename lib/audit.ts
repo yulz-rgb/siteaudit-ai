@@ -1,372 +1,335 @@
-import { z } from "zod";
+import type { AuditResult, CategoryScore, RevenueLeak, ScrapeResult } from "@/lib/types";
 import { chatJson } from "@/lib/openai";
-import type { AuditResult, ScrapeResult } from "@/lib/types";
 
-const auditSchema = z.object({
-  score: z.coerce.number().min(0).max(10),
-  verdict: z.string(),
-  money_leak: z.string(),
-  top_issues: z.array(z.string()),
-  quick_wins: z.array(z.string()),
-  estimated_impact: z.string().optional(),
-  inferred_goal: z.string().optional(),
-  inferred_audience: z.string().optional(),
-  rewrite: z
-    .object({
-      hero_headline: z.string(),
-      cta: z.string()
-    })
-    .optional(),
-  priority_actions: z.array(
-    z.object({
-      action: z.string(),
-      impact: z.enum(["High", "Medium", "Low"]),
-      difficulty: z.enum(["Low", "Medium", "High"]),
-      why_it_matters: z.string()
-    })
-  )
-});
+type Factor = {
+  name: string;
+  category: CategoryScore["category"];
+  detector: (ctx: EvalCtx) => 0 | 0.5 | 1;
+};
 
-function parseAiJsonLenient(raw: string): unknown {
-  const trimmed = raw.trim();
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("No JSON object found in AI output.");
-    }
-    return JSON.parse(trimmed.slice(start, end + 1));
-  }
+type EvalCtx = {
+  text: string;
+  title: string;
+  meta: string;
+  h1: string[];
+  h2: string[];
+  h3: string[];
+  images: ScrapeResult["images"];
+  links: number;
+  words: number;
+  url: string;
+};
+
+const CATEGORY_WEIGHTS: Record<CategoryScore["category"], number> = {
+  Conversion: 30,
+  Trust: 20,
+  "First Impression": 15,
+  UX: 10,
+  "Offer Clarity": 10,
+  Visuals: 5,
+  Performance: 5,
+  SEO: 3,
+  Analytics: 1,
+  Retention: 1
+};
+
+const PENALTIES = {
+  noReviews: 15,
+  weakHero: 10,
+  noUrgency: 8,
+  hiddenPricing: 12,
+  poorMobile: 15,
+  slowLoad: 7,
+  weakCta: 10,
+  noTrustStack: 9,
+  noPolicy: 6,
+  brokenFlow: 8
+};
+
+function hasAny(text: string, patterns: RegExp[]): boolean {
+  return patterns.some((p) => p.test(text));
 }
 
-type SiteVertical = "villa" | "ecommerce" | "saas" | "service" | "generic";
-
-function detectVertical(scraped: ScrapeResult): SiteVertical {
-  const text = `${scraped.url} ${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
-  if (/villa|holiday home|vacation rental|airbnb|booking|stay|guests|nightly/.test(text)) return "villa";
-  if (/shop|store|cart|checkout|product|amazon/.test(text)) return "ecommerce";
-  if (/saas|software|platform|tool|app|subscription/.test(text)) return "saas";
-  if (/agency|service|consult|quote|appointment|book call/.test(text)) return "service";
-  return "generic";
-}
-
-function inferGoalFromContent(scraped: ScrapeResult): string {
-  if (detectVertical(scraped) === "villa") return "Increase direct villa bookings and occupancy";
-  const text = `${scraped.url} ${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
-  if (/audit|conversion|saas|software|tool|app/.test(text)) return "Increase qualified leads and paid subscriptions";
-  if (/book|reservation|villa|hotel|airbnb|stay/.test(text)) return "Increase qualified bookings";
-  if (/shop|buy|cart|checkout|product|store/.test(text)) return "Increase product sales";
-  if (/agency|service|consult|contact|quote/.test(text)) return "Generate qualified service leads";
-  if (/saas|software|demo|trial|signup/.test(text)) return "Increase demo requests and paid signups";
-  return "Increase qualified conversions and revenue";
-}
-
-function normalizeGoalForCopy(goal: string): string {
-  const text = goal.toLowerCase();
-  if (/booking|reservation|stay|villa|hotel/.test(text)) return "increase qualified bookings";
-  if (/lead|enquiry|inquiry|quote|contact/.test(text)) return "generate more qualified leads";
-  if (/sale|revenue|purchase|checkout|order/.test(text)) return "increase sales revenue";
-  if (/signup|trial|demo|subscription/.test(text)) return "increase qualified signups";
-  return "increase conversions and revenue";
-}
-
-function sanitizeAudience(url: string, audience: string, fallbackAudience: string): string {
-  const hostAndAudience = `${new URL(url).hostname} ${audience}`.toLowerCase();
-  if (/siteaudit|audit|saas|software|tool|app/.test(hostAndAudience) && /leisure travelers|vacation|holiday/.test(hostAndAudience)) {
-    return "Founders, marketers, and growth teams improving conversion performance";
-  }
-  if (/villa|holiday|stay|booking|airbnb/.test(hostAndAudience) && /founders|marketers|growth teams|b2b/.test(hostAndAudience)) {
-    return "Couples, families, and small groups planning high-intent holiday stays";
-  }
-  return audience || fallbackAudience;
-}
-
-function sanitizeRewriteHeadline(headline: string, audience: string, goal: string): string {
-  const normalizedGoal = normalizeGoalForCopy(goal);
-  const candidate = headline.trim();
-  if (!candidate || /^get\s+improve\b/i.test(candidate) || candidate.length < 24) {
-    return `Convert more ${audience.toLowerCase()} by clarifying your offer and reducing conversion friction to ${normalizedGoal}.`;
-  }
-  return candidate;
-}
-
-function inferAudienceFromContent(scraped: ScrapeResult): string {
-  if (detectVertical(scraped) === "villa") {
-    return "Couples, families, and small groups planning high-intent holiday stays";
-  }
-  const host = new URL(scraped.url).hostname.toLowerCase();
-  const text = `${scraped.url} ${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
-  if (/siteaudit|audit|saas|software|app|tool|platform/.test(host + " " + text)) {
-    return "Founders, marketers, and growth teams improving conversion performance";
-  }
-  if (/amazon|shop|store|checkout|cart|product/.test(host + " " + text)) {
-    return "Online shoppers comparing price, trust, and delivery confidence";
-  }
-  if (/villa|travel|holiday|vacation|stay|reservation/.test(text)) {
-    return "Leisure travelers comparing accommodation options";
-  }
-  if (/wedding|event|florist|venue/.test(text)) {
-    return "Couples and event planners seeking premium event services";
-  }
-  if (/b2b|enterprise|team|company|business/.test(text)) {
-    return "Business buyers evaluating ROI and trust quickly";
-  }
-  if (/beauty|spa|salon|clinic/.test(text)) {
-    return "Consumers evaluating quality, trust, and booking convenience";
-  }
-  return "Visitors with high intent but limited attention span";
-}
-
-function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience?: string): AuditResult {
-  const vertical = detectVertical(scraped);
-  const resolvedGoal = goal || inferGoalFromContent(scraped);
-  const normalizedGoalForCopy = normalizeGoalForCopy(resolvedGoal);
-  const resolvedAudience = targetAudience || inferAudienceFromContent(scraped);
+function makeContext(scraped: ScrapeResult): EvalCtx {
   const text = `${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
-  const ctaKeywords = ["book", "buy", "start", "get started", "contact", "call", "shop", "subscribe"];
-  const trustKeywords = ["testimonial", "review", "trusted", "clients", "case study", "award", "years"];
-  const clarityKeywords = ["for ", "help", "solution", "service", "benefit", "we help", "designed for", "results", "book"];
-  const urgencyKeywords = ["today", "now", "limited", "offer", "save", "book now", "request"];
-  const frictionKeywords = ["learn more", "click here", "submit", "read more"];
-
-  const hasMeta = scraped.metaDescription.length > 30;
-  const hasH1 = scraped.headings.h1.length > 0;
-  const hasCta = ctaKeywords.some((word) => text.includes(word));
-  const hasTrust = trustKeywords.some((word) => text.includes(word));
-  const hasClarity = clarityKeywords.some((word) => text.includes(word));
-  const hasUrgency = urgencyKeywords.some((word) => text.includes(word));
-  const hasHighFrictionCta = frictionKeywords.filter((word) => text.includes(word)).length >= 2;
-  const h2Count = scraped.headings.h2.length;
-  const imageAltCoverage =
-    scraped.images.length === 0 ? 1 : scraped.images.filter((img) => img.alt.trim().length > 3).length / scraped.images.length;
-
-  let score = 3.6;
-  if (hasMeta) score += 1.2;
-  if (hasH1) score += 0.9;
-  if (hasCta) score += 1.1;
-  if (hasTrust) score += 0.8;
-  if (hasClarity) score += 0.8;
-  if (h2Count >= 3) score += 0.4;
-  if (hasUrgency) score += 0.3;
-  if (hasHighFrictionCta) score -= 0.6;
-  if (imageAltCoverage > 0.6) score += 0.6;
-  score = Math.max(1.8, Math.min(7.6, Number(score.toFixed(1))));
-
-  const topIssues: string[] = [];
-  if (!hasCta) topIssues.push("Primary call-to-action is not clearly visible in the homepage copy.");
-  if (!hasTrust) topIssues.push("Trust signals (proof, testimonials, or authority markers) are weak or missing.");
-  if (!hasMeta) topIssues.push("Meta description is weak, reducing click-through quality from search/social.");
-  if (!hasH1) topIssues.push("No clear H1 hierarchy, which hurts message clarity and user orientation.");
-  if (h2Count < 2) topIssues.push("Section structure is shallow, making the page harder to scan and convert from.");
-  if (!hasUrgency) topIssues.push("CTA copy lacks urgency, lowering immediate conversion intent.");
-  if (hasHighFrictionCta) topIssues.push("CTA language is generic and high-friction; use action-specific outcome wording.");
-  if (imageAltCoverage < 0.4) topIssues.push("Image alt text coverage is low, reducing accessibility and context.");
-  const defaultIssues = [
-    "Value proposition is not tied tightly enough to buyer intent at first glance.",
-    "Offer differentiation is not explicit enough in above-the-fold copy.",
-    "Conversion path can be simplified to reduce decision friction."
-  ];
-  while (topIssues.length < 3) {
-    topIssues.push(defaultIssues[topIssues.length % defaultIssues.length]);
-  }
-
-  const quickWins = [
-    `Add one clear above-the-fold CTA aligned to "${normalizedGoalForCopy}".`,
-    `Rewrite hero copy for one audience: ${resolvedAudience}.`,
-    "Place a trust block (reviews/logos/results) beside the primary CTA.",
-    "Use an urgency-focused CTA variant (for example: 'Book your consultation today').",
-    "Show a concrete offer or package outcome before users scroll."
-  ];
-  if (vertical === "villa") {
-    quickWins.unshift("Show nightly price anchor, cleaning fee clarity, and calendar availability above the fold.");
-  }
-
-  const estimatedImpactLow = Math.max(8, Math.round((10 - score) * 2));
-  const estimatedImpactHigh = estimatedImpactLow + 12;
-
+  const linkMatches = scraped.bodyText.match(/https?:\/\//g);
+  const words = scraped.bodyText.split(/\s+/).filter(Boolean).length;
   return {
-    score,
-    verdict:
-      vertical === "villa"
-        ? "This villa site underperforms because booking confidence is weaker than booking intent in the first visit."
-        : "This site is underperforming because the conversion intent is weaker than the attention required to trust and act.",
-    money_leak:
-      vertical === "villa"
-        ? "Bookings are leaking in the first-screen journey where pricing/trust details are not clear enough to commit."
-        : "Revenue is leaking in the first-screen experience where visitors do not get enough proof and urgency to commit.",
-    estimated_impact: `Fixing these issues could increase conversions by ${estimatedImpactLow}-${estimatedImpactHigh}%.`,
-    top_issues: topIssues.slice(0, 5),
-    quick_wins: quickWins,
-    inferred_goal: resolvedGoal,
-    inferred_audience: resolvedAudience,
-    rewrite: {
-      hero_headline:
-        vertical === "villa"
-          ? "Book your ideal villa stay with transparent pricing, trusted reviews, and instant availability."
-          : `Get better results faster with a clearer offer and stronger trust signals for ${resolvedAudience.toLowerCase()}.`,
-      cta: vertical === "villa" ? "Check Availability & Book Now" : "Get Your Conversion Plan"
-    },
-    priority_actions: [
-      {
-        action: "Clarify hero value proposition in one sentence with concrete outcome",
-        impact: "High",
-        difficulty: "Low",
-        why_it_matters: "Visitors decide in seconds whether your offer is relevant and worth attention."
-      },
-      {
-        action: "Introduce a single primary CTA and remove competing action paths",
-        impact: "High",
-        difficulty: "Medium",
-        why_it_matters: "Reducing choice friction increases click-through into revenue-driving steps."
-      },
-      {
-        action: "Add trust proof directly next to CTA (reviews, case results, guarantees)",
-        impact: "Medium",
-        difficulty: "Low",
-        why_it_matters: "Trust proof at decision points reduces hesitation and improves conversion intent."
-      }
-    ],
-    error: "fallback-analysis-used"
+    text,
+    title: scraped.title.toLowerCase(),
+    meta: scraped.metaDescription.toLowerCase(),
+    h1: scraped.headings.h1.map((h) => h.toLowerCase()),
+    h2: scraped.headings.h2.map((h) => h.toLowerCase()),
+    h3: scraped.headings.h3.map((h) => h.toLowerCase()),
+    images: scraped.images,
+    links: linkMatches?.length || 0,
+    words,
+    url: scraped.url
   };
+}
+
+function scoreSignal(value: boolean, weak = false): 0 | 0.5 | 1 {
+  if (value && weak) return 0.5;
+  return value ? 1 : 0;
+}
+
+const FACTORS: Factor[] = [
+  { name: "Primary CTA present", category: "Conversion", detector: (c) => scoreSignal(hasAny(c.text, [/\bbook now\b/, /\bcheck availability\b/, /\breserve\b/, /\bstart booking\b/])) },
+  { name: "CTA above fold cues", category: "Conversion", detector: (c) => scoreSignal(c.h1.length > 0 && hasAny(`${c.title} ${c.h1[0] || ""}`, [/\bbook\b/, /\bvilla\b/, /\bstay\b/]), true) },
+  { name: "Calendar language", category: "Conversion", detector: (c) => scoreSignal(hasAny(c.text, [/\bcalendar\b/, /\bavailability\b/, /\bdates\b/])) },
+  { name: "Pricing visibility", category: "Conversion", detector: (c) => scoreSignal(hasAny(c.text, [/€\s?\d+/, /\bper night\b/, /\bnightly\b/, /\bprice\b/])) },
+  { name: "Low-friction booking wording", category: "Conversion", detector: (c) => scoreSignal(!hasAny(c.text, [/\bsubmit\b/, /\blearn more\b/, /\bclick here\b/]), true) },
+  { name: "Strong value proposition", category: "Conversion", detector: (c) => scoreSignal(c.h1.some((h) => h.length > 25 && h.length < 120), true) },
+
+  { name: "Reviews/testimonials", category: "Trust", detector: (c) => scoreSignal(hasAny(c.text, [/\breviews?\b/, /\bguest reviews?\b/, /\btestimonial\b/])) },
+  { name: "Review quantity cues", category: "Trust", detector: (c) => scoreSignal(hasAny(c.text, [/\b\d+\+?\s+reviews\b/, /\bgoogle reviews\b/, /\btripadvisor\b/]), true) },
+  { name: "Contact details", category: "Trust", detector: (c) => scoreSignal(hasAny(c.text, [/\+?\d{6,}/, /@/, /\bwhatsapp\b/])) },
+  { name: "Policy information", category: "Trust", detector: (c) => scoreSignal(hasAny(c.text, [/\bcancellation\b/, /\bterms\b/, /\bpolicy\b/, /\brefund\b/])) },
+  { name: "Location confidence", category: "Trust", detector: (c) => scoreSignal(hasAny(c.text, [/\blocation\b/, /\bmap\b/, /\baddress\b/]), true) },
+  { name: "Awards or press", category: "Trust", detector: (c) => scoreSignal(hasAny(c.text, [/\bfeatured in\b/, /\baward\b/, /\btrusted by\b/]), true) },
+
+  { name: "Clear headline", category: "First Impression", detector: (c) => scoreSignal(c.h1.length > 0) },
+  { name: "Meta description quality", category: "First Impression", detector: (c) => scoreSignal(c.meta.length > 60, c.meta.length > 20) },
+  { name: "Brand + offer in title", category: "First Impression", detector: (c) => scoreSignal(c.title.length > 20, c.title.length > 10) },
+  { name: "Luxury positioning cues", category: "First Impression", detector: (c) => scoreSignal(hasAny(c.text, [/\bluxury\b/, /\bpremium\b/, /\bprivate\b/, /\bexclusive\b/]), true) },
+  { name: "Emotional pull", category: "First Impression", detector: (c) => scoreSignal(hasAny(c.text, [/\bescape\b/, /\brelax\b/, /\bunforgettable\b/, /\bdream\b/]), true) },
+  { name: "Hero clarity", category: "First Impression", detector: (c) => scoreSignal(c.h1.some((h) => /\bvilla|stay|book|holiday|retreat/.test(h)), true) },
+
+  { name: "Navigation depth", category: "UX", detector: (c) => scoreSignal(c.h2.length >= 3, c.h2.length >= 1) },
+  { name: "Scan-friendly content", category: "UX", detector: (c) => scoreSignal(c.words > 220, c.words > 120) },
+  { name: "Broken-link risk (heuristic)", category: "UX", detector: (c) => scoreSignal(c.links >= 1, true) },
+  { name: "Mobile hints in content", category: "UX", detector: (c) => scoreSignal(hasAny(c.text, [/\bcall\b/, /\bwhatsapp\b/, /\btap\b/]), true) },
+  { name: "Clear sectioning", category: "UX", detector: (c) => scoreSignal(c.h2.length + c.h3.length >= 6, c.h2.length + c.h3.length >= 3) },
+  { name: "Booking path clarity", category: "UX", detector: (c) => scoreSignal(hasAny(c.text, [/\b1\b.*\b2\b.*\b3\b/, /\bhow it works\b/]), true) },
+
+  { name: "Offer explicitness", category: "Offer Clarity", detector: (c) => scoreSignal(hasAny(c.text, [/\bbedrooms?\b/, /\bguests?\b/, /\bamenities\b/])) },
+  { name: "Price anchor", category: "Offer Clarity", detector: (c) => scoreSignal(hasAny(c.text, [/€\s?\d+/, /\bfrom €?\d+/])) },
+  { name: "Availability cue", category: "Offer Clarity", detector: (c) => scoreSignal(hasAny(c.text, [/\bavailable\b/, /\bcalendar\b/, /\bdates\b/])) },
+  { name: "Stay policy clarity", category: "Offer Clarity", detector: (c) => scoreSignal(hasAny(c.text, [/\bminimum stay\b/, /\bcheck-in\b/, /\bcheck-out\b/]), true) },
+  { name: "Inclusion clarity", category: "Offer Clarity", detector: (c) => scoreSignal(hasAny(c.text, [/\bincluded\b/, /\bcleaning\b/, /\btaxes\b/]), true) },
+  { name: "Differentiation", category: "Offer Clarity", detector: (c) => scoreSignal(hasAny(c.text, [/\bwhy choose\b/, /\bunique\b/, /\bcompared\b/]), true) },
+
+  { name: "Image presence", category: "Visuals", detector: (c) => scoreSignal(c.images.length >= 6, c.images.length >= 3) },
+  { name: "Image alt coverage", category: "Visuals", detector: (c) => {
+    if (!c.images.length) return 0;
+    const coverage = c.images.filter((i) => i.alt.trim().length > 4).length / c.images.length;
+    return coverage > 0.7 ? 1 : coverage > 0.35 ? 0.5 : 0;
+  }},
+  { name: "Lifestyle image cues", category: "Visuals", detector: (c) => scoreSignal(c.images.some((i) => /pool|view|bedroom|terrace|villa|living/i.test(i.alt)), true) },
+  { name: "Visual trust badges", category: "Visuals", detector: (c) => scoreSignal(hasAny(c.text, [/\bbadge\b/, /\bverified\b/, /\bsuperhost\b/]), true) },
+  { name: "Visual consistency proxy", category: "Visuals", detector: (c) => scoreSignal(c.images.length >= 4 && c.h2.length >= 2, true) },
+  { name: "Visual storytelling", category: "Visuals", detector: (c) => scoreSignal(c.h2.some((h) => /gallery|experience|inside/.test(h)), true) },
+
+  { name: "Performance hint scripts low", category: "Performance", detector: (c) => scoreSignal(c.words < 3500, c.words < 5000) },
+  { name: "Image payload proxy", category: "Performance", detector: (c) => scoreSignal(c.images.length <= 25, c.images.length <= 40) },
+  { name: "Critical content early", category: "Performance", detector: (c) => scoreSignal(c.h1.length > 0 && c.meta.length > 0) },
+  { name: "No bloated copy", category: "Performance", detector: (c) => scoreSignal(c.words < 1800, c.words < 2800) },
+  { name: "Text-to-media balance", category: "Performance", detector: (c) => scoreSignal(c.images.length > 0 && c.words / Math.max(1, c.images.length) < 180, true) },
+
+  { name: "Title tag", category: "SEO", detector: (c) => scoreSignal(c.title.length > 10) },
+  { name: "Meta description", category: "SEO", detector: (c) => scoreSignal(c.meta.length > 30) },
+  { name: "H1 presence", category: "SEO", detector: (c) => scoreSignal(c.h1.length > 0) },
+  { name: "Heading depth", category: "SEO", detector: (c) => scoreSignal(c.h2.length >= 3, c.h2.length >= 1) },
+  { name: "Image alt text", category: "SEO", detector: (c) => scoreSignal(c.images.some((i) => i.alt.trim().length > 0), true) },
+
+  { name: "Analytics signals", category: "Analytics", detector: (c) => scoreSignal(hasAny(c.text, [/\bgtag\b/, /\bgoogle analytics\b/, /\bpixel\b/, /\bhotjar\b/]), true) },
+  { name: "Conversion tracking mention", category: "Analytics", detector: (c) => scoreSignal(hasAny(c.text, [/\btrack\b/, /\bmeasure\b/, /\battribution\b/]), true) },
+
+  { name: "Email capture", category: "Retention", detector: (c) => scoreSignal(hasAny(c.text, [/\bnewsletter\b/, /\bsubscribe\b/, /\bemail\b/]), true) },
+  { name: "Return incentive", category: "Retention", detector: (c) => scoreSignal(hasAny(c.text, [/\breturn\b/, /\bloyalty\b/, /\bmember\b/, /\brepeat\b/]), true) }
+];
+
+function computeCategoryBreakdown(ctx: EvalCtx): { category_breakdown: CategoryScore[]; score_100: number } {
+  const byCategory = new Map<CategoryScore["category"], number[]>();
+  for (const factor of FACTORS) {
+    const signal = factor.detector(ctx);
+    const list = byCategory.get(factor.category) || [];
+    list.push(signal);
+    byCategory.set(factor.category, list);
+  }
+
+  const category_breakdown: CategoryScore[] = (Object.keys(CATEGORY_WEIGHTS) as CategoryScore["category"][]).map((category) => {
+    const values = byCategory.get(category) || [];
+    const raw = values.reduce((sum, v) => sum + v, 0);
+    const max = Math.max(1, values.length);
+    const weight = CATEGORY_WEIGHTS[category];
+    const weighted = (raw / max) * weight;
+    return {
+      category,
+      weighted_score: Number(weighted.toFixed(2)),
+      max_weight: weight,
+      percent: Number(((raw / max) * 100).toFixed(1))
+    };
+  });
+
+  const score_100 = Number(category_breakdown.reduce((sum, c) => sum + c.weighted_score, 0).toFixed(1));
+  return { category_breakdown, score_100 };
+}
+
+function computePenalties(ctx: EvalCtx): { total: number; leaks: RevenueLeak[] } {
+  const triggers: RevenueLeak[] = [];
+  if (!hasAny(ctx.text, [/\breviews?\b/, /\btestimonial\b/, /\bguest rating\b/])) {
+    triggers.push({ issue: "No reviews or testimonial proof", impact_percent: PENALTIES.noReviews, explanation: "Guests cannot validate quality before booking." });
+  }
+  if (!ctx.h1.length || !/\bvilla|book|stay|holiday|retreat/.test(ctx.h1[0])) {
+    triggers.push({ issue: "Weak hero message", impact_percent: PENALTIES.weakHero, explanation: "First screen does not sell the stay outcome fast enough." });
+  }
+  if (!hasAny(ctx.text, [/\bbook now\b/, /\blimited\b/, /\bthis season\b/, /\bavailability\b/])) {
+    triggers.push({ issue: "No urgency cues", impact_percent: PENALTIES.noUrgency, explanation: "Users delay decisions without a timing trigger." });
+  }
+  if (!hasAny(ctx.text, [/€\s?\d+/, /\bper night\b/, /\bprice\b/])) {
+    triggers.push({ issue: "Pricing hidden or unclear", impact_percent: PENALTIES.hiddenPricing, explanation: "High-intent guests bounce when price framing is missing." });
+  }
+  if (!hasAny(ctx.text, [/\bmobile\b/, /\bwhatsapp\b/, /\bcall\b/, /\btap\b/])) {
+    triggers.push({ issue: "Poor mobile conversion cues", impact_percent: PENALTIES.poorMobile, explanation: "Most leisure traffic is mobile-first and needs direct action paths." });
+  }
+  if (ctx.words > 2600 || ctx.images.length > 28) {
+    triggers.push({ issue: "Slow load risk", impact_percent: PENALTIES.slowLoad, explanation: "Heavy pages reduce completed booking sessions." });
+  }
+  if (!hasAny(ctx.text, [/\bbook now\b/, /\bcheck availability\b/, /\breserve\b/])) {
+    triggers.push({ issue: "Weak booking CTA", impact_percent: PENALTIES.weakCta, explanation: "Visitors are not pushed into the booking flow." });
+  }
+  if (!hasAny(ctx.text, [/\bcancellation\b/, /\bpolicy\b/, /\bterms\b/])) {
+    triggers.push({ issue: "Missing trust stack policies", impact_percent: PENALTIES.noPolicy, explanation: "Risk objections stay unresolved at checkout time." });
+  }
+  if (!hasAny(ctx.text, [/\bhow it works\b/, /\bstep\b/, /\bavailability\b/, /\bcalendar\b/])) {
+    triggers.push({ issue: "Broken booking flow communication", impact_percent: PENALTIES.brokenFlow, explanation: "Guests do not understand the next step to secure dates." });
+  }
+
+  const sorted = triggers.sort((a, b) => b.impact_percent - a.impact_percent);
+  const total = Math.min(70, sorted.reduce((sum, leak) => sum + leak.impact_percent, 0));
+  return { total, leaks: sorted.slice(0, 5) };
+}
+
+function inferTraffic(ctx: EvalCtx, score_100: number): { low: number; high: number } {
+  const seoSignal = hasAny(ctx.text, [/\blocation\b/, /\bvilla\b/, /\bholiday\b/, /\bbeach\b/, /\bpool\b/]) ? 1.2 : 1;
+  const contentSignal = Math.min(1.6, Math.max(0.7, ctx.words / 900));
+  const authoritySignal = hasAny(ctx.text, [/\breviews?\b/, /\bfeatured\b/, /\baward\b/]) ? 1.15 : 0.95;
+  const scoreSignal = Math.max(0.8, score_100 / 100);
+  const baseline = 1200 * seoSignal * contentSignal * authoritySignal * scoreSignal;
+  const low = Math.max(350, Math.round(baseline * 0.7));
+  const high = Math.max(low + 150, Math.round(baseline * 1.45));
+  return { low, high };
+}
+
+function parseAvgBookingValue(nightlyPrice?: number): { low: number; high: number } {
+  if (nightlyPrice && nightlyPrice > 30) {
+    const low = Math.round(nightlyPrice * 4);
+    const high = Math.round(nightlyPrice * 8);
+    return { low, high };
+  }
+  return { low: 3000, high: 15000 };
+}
+
+function asEurRange(range: { low: number; high: number }): string {
+  return `€${range.low.toLocaleString()}–€${range.high.toLocaleString()}`;
+}
+
+async function buildAiRecommendations(leaks: RevenueLeak[], goal: string): Promise<string[]> {
+  const leakSummary = leaks.map((l) => `${l.issue} (${l.impact_percent}%)`).join(", ");
+  const prompt = `You explain CRO actions for villa booking sites.
+Return strict JSON: {"recommendations": ["...", "...", "..."]}.
+Goal: ${goal}
+Top detected leaks: ${leakSummary}
+Rules: practical, specific, 1 sentence each, no fluff.`;
+  try {
+    const res = await chatJson(prompt);
+    const parsed = JSON.parse(res.text) as { recommendations?: string[] };
+    if (Array.isArray(parsed.recommendations) && parsed.recommendations.length) {
+      return parsed.recommendations.slice(0, 4);
+    }
+  } catch {
+    // deterministic fallback below
+  }
+  return leaks.slice(0, 4).map((leak) => `Fix "${leak.issue.toLowerCase()}" first to recover high-intent booking demand faster.`);
 }
 
 export async function generateAudit(
   scraped: ScrapeResult,
   goal?: string,
-  targetAudience?: string
+  targetAudience?: string,
+  nightlyPrice?: number,
+  occupancyPercent?: number,
+  platform?: string
 ): Promise<AuditResult> {
-  const resolvedGoal = goal || inferGoalFromContent(scraped);
-  const resolvedAudience = targetAudience || inferAudienceFromContent(scraped);
-  const vertical = detectVertical(scraped);
-  const prompt = `
-SYSTEM:
-You are a short-term rental conversion expert.
+  const ctx = makeContext(scraped);
+  const { category_breakdown, score_100 } = computeCategoryBreakdown(ctx);
+  const { total, leaks } = computePenalties(ctx);
+  const benchmarkLow = 0.015;
+  const benchmarkHigh = 0.03;
+  const adjustedLow = Number((benchmarkLow * (1 - total / 100)).toFixed(4));
+  const adjustedHigh = Number((benchmarkHigh * (1 - total / 100)).toFixed(4));
 
-You specialise in:
-- villa websites
-- Airbnb-style bookings
-- hospitality UX
-- pricing psychology
+  const traffic = inferTraffic(ctx, score_100);
+  const avgBookingValue = parseAvgBookingValue(nightlyPrice);
+  const currentYearly = {
+    low: Math.round(traffic.low * adjustedLow * avgBookingValue.low * 12),
+    high: Math.round(traffic.high * adjustedHigh * avgBookingValue.high * 12)
+  };
+  const potentialYearly = {
+    low: Math.round(traffic.low * benchmarkLow * avgBookingValue.low * 12),
+    high: Math.round(traffic.high * benchmarkHigh * avgBookingValue.high * 12)
+  };
+  const lossYearly = {
+    low: Math.max(0, potentialYearly.low - currentYearly.low),
+    high: Math.max(0, potentialYearly.high - currentYearly.high)
+  };
 
-You think in:
-- occupancy rate
-- booking friction
-- trust
-- perceived luxury
+  const severity: AuditResult["severity"] = total >= 45 || score_100 < 45 ? "HIGH" : total >= 25 || score_100 < 65 ? "MEDIUM" : "LOW";
+  const resolvedGoal = goal?.trim() || "Increase direct bookings and occupancy";
+  const resolvedAudience = targetAudience?.trim() || "Families, couples, and groups planning premium stays";
+  const resolvedPlatform = platform?.trim() || "both";
+  const occupancy = typeof occupancyPercent === "number" && occupancyPercent > 0 ? occupancyPercent : undefined;
 
-INPUT:
-- website content
-- optional goal
+  const quickWins = leaks.slice(0, 3).map((l) => `Fix ${l.issue.toLowerCase()} to recover up to ${l.impact_percent}% conversion drag.`);
+  const aiRecommendations = await buildAiRecommendations(leaks, resolvedGoal);
+  const topIssueStrings = leaks.map((l) => `${l.issue} (${l.impact_percent}% impact)`);
+  const top3Impact = Math.min(35, leaks.slice(0, 3).reduce((s, l) => s + l.impact_percent, 0));
+  const top3Gain = {
+    low: Math.round((potentialYearly.low * top3Impact) / 100),
+    high: Math.round((potentialYearly.high * top3Impact) / 100)
+  };
 
-TASK:
-1. Identify:
-   - what this site is selling
-   - who it targets
-   - what action user should take
-2. Detect:
-   - where bookings/revenue are being lost
-   - what is unclear or weak
-   - what blocks conversion
-3. Assign REAL score:
-   - based on clarity, trust, friction, offer strength
-   - DO NOT inflate scores
-4. Think like you are responsible for revenue.
-
-OUTPUT FORMAT (STRICT JSON):
-{
-  "score": number,
-  "verdict": "Why this site is underperforming",
-  "money_leak": "Where revenue is being lost",
-  "top_issues": [ "specific, concrete problems only" ],
-  "quick_wins": [ "high ROI, actionable fixes" ],
-  "priority_actions": [
-    {
-      "action": "...",
-      "impact": "High" | "Medium" | "Low",
-      "difficulty": "Low" | "Medium" | "High",
-      "why_it_matters": "tie to conversion"
-    }
-  ],
-  "rewrite": {
-    "hero_headline": "...",
-    "cta": "..."
-  },
-  "estimated_impact": "Fixing these could increase conversions by X-Y%",
-  "inferred_goal": "...",
-  "inferred_audience": "..."
-}
-
-RULES:
-- No vague language
-- No generic advice
-- Every point must be specific
-- Keep score realistic and strict
-- Everything must map to BOOKINGS and REVENUE.
-
-Website URL: ${scraped.url}
-Goal: ${resolvedGoal}
-Audience Hint: ${resolvedAudience}
-Vertical Hint: ${vertical}
-Title: ${scraped.title}
-Meta description: ${scraped.metaDescription}
-Headings: ${JSON.stringify(scraped.headings)}
-Images: ${JSON.stringify(scraped.images.slice(0, 10))}
-Body text:
-${scraped.bodyText.slice(0, 7000)}
-`;
-
-  try {
-    const ai = await chatJson(prompt);
-    const parsed = auditSchema.safeParse(parseAiJsonLenient(ai.text));
-    if (!parsed.success) throw new Error("Invalid AI JSON");
-    const clampedScore = Math.max(0, Math.min(8.5, Number(parsed.data.score.toFixed(1))));
-    const safeAudience = sanitizeAudience(scraped.url, parsed.data.inferred_audience || resolvedAudience, resolvedAudience);
-    const safeGoal = parsed.data.inferred_goal || resolvedGoal;
-    const safeHeadline = sanitizeRewriteHeadline(parsed.data.rewrite?.hero_headline || "", safeAudience, safeGoal);
-    const isVilla = vertical === "villa";
-    return {
-      ...parsed.data,
-      score: clampedScore,
-      estimated_impact: parsed.data.estimated_impact || `Fixing these could increase conversions by ${Math.round((10 - clampedScore) * 2)}-${Math.round((10 - clampedScore) * 3.2)}%.`,
-      inferred_goal: safeGoal,
-      inferred_audience: isVilla ? "Couples, families, and small groups planning high-intent holiday stays" : safeAudience,
-      rewrite: {
-        hero_headline:
-          isVilla && !/villa|stay|book|holiday|guest|retreat/i.test(safeHeadline)
-            ? "Book your ideal villa stay with transparent pricing, trusted reviews, and instant availability."
-            : safeHeadline,
-        cta: isVilla ? "Check Availability & Book Now" : parsed.data.rewrite?.cta || "Start Converting Better"
-      },
-      quick_wins:
-        parsed.data.quick_wins.length > 0
-          ? parsed.data.quick_wins.map((win) => win.replace(/"[^"]{40,}"/g, `"${normalizeGoalForCopy(safeGoal)}"`))
-          : [
-              `Add one clear above-the-fold CTA aligned to "${normalizeGoalForCopy(safeGoal)}".`,
-              `Rewrite hero copy for one audience: ${safeAudience}.`,
-              "Add proof and trust near the main CTA."
-            ],
-      top_issues: parsed.data.top_issues.length > 0 ? parsed.data.top_issues : ["Offer clarity and CTA positioning are reducing conversion intent."],
-      priority_actions: parsed.data.priority_actions.length > 0 ? parsed.data.priority_actions : [
-        {
-          action: "Clarify hero value proposition in one sentence with concrete outcome",
-          impact: "High",
-          difficulty: "Low",
-          why_it_matters: "Visitors decide in seconds whether your offer is relevant and worth attention."
-        }
-      ],
-      money_leak: parsed.data.money_leak || "Revenue leaks when users do not get trust + action clarity in the first screen.",
-      verdict:
-        parsed.data.verdict ||
-        (isVilla
-          ? "This villa listing underperforms because booking intent is not converted into booking confidence fast enough."
-          : "This site is underperforming due to weak conversion clarity in key decision moments."),
-      // keep provider diagnostic without leaking to UI
-      error: ai.provider === "openai" ? undefined : "openai-fallback-provider-used"
-    };
-  } catch (error) {
-    console.error("[audit] AI generation failed, using deterministic fallback:", error);
-    return buildFallbackAudit(scraped, goal, targetAudience);
-  }
+  return {
+    score: Number((score_100 / 10).toFixed(1)),
+    score_100,
+    severity,
+    total_penalty_percent: total,
+    booking_loss_percent: total,
+    revenue_loss_yearly: lossYearly,
+    revenue_current_yearly: currentYearly,
+    revenue_potential_yearly: potentialYearly,
+    traffic_estimate_monthly: traffic,
+    avg_booking_value: avgBookingValue,
+    conversion_rate: {
+      benchmark_low: benchmarkLow,
+      benchmark_high: benchmarkHigh,
+      adjusted_low: adjustedLow,
+      adjusted_high: adjustedHigh
+    },
+    top_revenue_leaks: leaks,
+    category_breakdown,
+    impact_simulator: {
+      top3_fixes_gain_yearly: top3Gain,
+      summary: `If you fix the top 3 leaks, projected upside is ${asEurRange(top3Gain)} / year.`
+    },
+    ai_recommendations: aiRecommendations,
+    verdict: `You are losing ~${total}% of bookings because high-intent visitors are meeting friction before confidence.`,
+    money_leak: leaks[0]?.issue || "Booking confidence is weaker than booking intent.",
+    top_issues: topIssueStrings,
+    quick_wins: quickWins,
+    priority_actions: leaks.slice(0, 5).map((l, idx) => ({
+      action: `Resolve: ${l.issue}`,
+      impact: idx < 2 ? "High" : "Medium",
+      difficulty: idx < 2 ? "Medium" : "Low",
+      why_it_matters: l.explanation
+    })),
+    rewrite: {
+      hero_headline: "Book your villa with transparent pricing, trusted guest proof, and instant availability.",
+      cta: "Check Dates & Book Securely"
+    },
+    estimated_impact: `Recover ${Math.min(45, total)}% of lost conversions with focused fixes.`,
+    inferred_goal: `${resolvedGoal} (${resolvedPlatform}${occupancy ? `, current occupancy ${occupancy}%` : ""})`,
+    inferred_audience: resolvedAudience
+  };
 }

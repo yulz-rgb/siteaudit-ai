@@ -8,6 +8,9 @@ export async function runAudit(formData: FormData) {
   const url = String(formData.get("url") || "");
   const goal = String(formData.get("goal") || "").trim();
   const targetAudience = String(formData.get("targetAudience") || "");
+  const nightlyPrice = String(formData.get("nightlyPrice") || "");
+  const occupancyPercent = String(formData.get("occupancyPercent") || "");
+  const platform = String(formData.get("platform") || "both");
 
   let parsedUrl = "";
   if (!goal) {
@@ -25,7 +28,10 @@ export async function runAudit(formData: FormData) {
     const query = new URLSearchParams({
       url: parsedUrl,
       goal,
-      targetAudience
+      targetAudience,
+      nightlyPrice,
+      occupancyPercent,
+      platform
     });
     redirect(`/results?${query.toString()}`);
   } catch (error) {
