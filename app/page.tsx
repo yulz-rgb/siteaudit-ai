@@ -16,6 +16,7 @@ export default function HomePage() {
           Get an AI-powered homepage conversion audit in seconds, with clear revenue-focused actions you can ship
           immediately.
         </p>
+        <p className="text-sm text-emerald-300/90">Full report currently free during beta.</p>
       </section>
 
       <InputForm />

@@ -1,12 +1,10 @@
 import Link from "next/link";
-import { createCheckoutSession } from "@/app/actions";
 import { ReportTable } from "@/components/ReportTable";
 import { ScoreCard } from "@/components/ScoreCard";
 import type { AuditResult } from "@/lib/types";
 
 type SearchParams = {
   data?: string;
-  paid?: string;
   error?: string;
 };
 
@@ -28,7 +26,6 @@ function parseAuditData(data?: string): { url: string; audit: AuditResult } | nu
 
 export default function ResultsPage({ searchParams }: { searchParams: SearchParams }) {
   const parsed = parseAuditData(searchParams.data);
-  const isPaid = searchParams.paid === "1";
   const error = searchParams.error;
 
   if (!parsed) {
@@ -47,9 +44,9 @@ export default function ResultsPage({ searchParams }: { searchParams: SearchPara
 
   const { audit, url } = parsed;
   const diagnosis = normalizeDiagnosis(audit.diagnosis);
-  const issues = isPaid ? audit.top_issues : audit.top_issues.slice(0, 3);
-  const quickWins = isPaid ? audit.quick_wins : [];
-  const actions = isPaid ? audit.priority_actions : [];
+  const issues = audit.top_issues;
+  const quickWins = audit.quick_wins;
+  const actions = audit.priority_actions;
 
   return (
     <main className="space-y-6">
@@ -68,6 +65,24 @@ export default function ResultsPage({ searchParams }: { searchParams: SearchPara
         </div>
       </div>
 
+      <section className="grid gap-4 md:grid-cols-2">
+        <div className="glass rounded-2xl p-6">
+          <h2 className="text-lg font-semibold">Inferred Goal</h2>
+          <p className="mt-2 text-white/80">{audit.inferred_goal || "Increase conversions and revenue."}</p>
+        </div>
+        <div className="glass rounded-2xl p-6">
+          <h2 className="text-lg font-semibold">Inferred Audience</h2>
+          <p className="mt-2 text-white/80">{audit.inferred_audience || "High-intent visitors comparing alternatives."}</p>
+        </div>
+      </section>
+
+      <section className="glass rounded-2xl p-6">
+        <h2 className="text-lg font-semibold">Culture & Location Notes</h2>
+        <p className="mt-2 text-white/80">
+          {audit.location_culture_notes || "Global audience patterns applied for trust, clarity, and conversion friction."}
+        </p>
+      </section>
+
       <section className="glass rounded-2xl p-6">
         <h2 className="text-lg font-semibold">Top Issues</h2>
         <ul className="mt-3 list-disc space-y-2 pl-5 text-white/80">
@@ -77,51 +92,60 @@ export default function ResultsPage({ searchParams }: { searchParams: SearchPara
         </ul>
       </section>
 
-      {!isPaid && (
-        <section className="glass rounded-2xl p-6">
-          <h3 className="text-lg font-semibold">Unlock Full Report</h3>
-          <p className="mt-2 text-white/70">
-            Get all quick wins, prioritized action table, and full report export.
-          </p>
-          <form action={createCheckoutSession} className="mt-4">
-            <input type="hidden" name="data" value={searchParams.data} />
-            <button
-              type="submit"
-              className="rounded-xl bg-gradient-to-r from-violet-500 to-blue-500 px-4 py-2 font-semibold text-white"
-            >
-              Upgrade with Stripe
-            </button>
-          </form>
-        </section>
-      )}
+      <section className="glass rounded-2xl p-6">
+        <h2 className="text-lg font-semibold">Quick Wins</h2>
+        <ul className="mt-3 space-y-2 text-white/80">
+          {quickWins.map((item, idx) => (
+            <li key={`${item}-${idx}`} className="flex items-start gap-2">
+              <span>✅</span>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
 
-      {isPaid && (
-        <>
-          <section className="glass rounded-2xl p-6">
-            <h2 className="text-lg font-semibold">Quick Wins</h2>
-            <ul className="mt-3 space-y-2 text-white/80">
-              {quickWins.map((item, idx) => (
-                <li key={`${item}-${idx}`} className="flex items-start gap-2">
-                  <span>✅</span>
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
+      <section className="grid gap-4 md:grid-cols-2">
+        <div className="glass rounded-2xl p-6">
+          <h2 className="text-lg font-semibold">Text Recommendations</h2>
+          <ul className="mt-3 list-disc space-y-2 pl-5 text-white/80">
+            {(audit.text_recommendations || []).map((item, idx) => (
+              <li key={`${item}-${idx}`}>{item}</li>
+            ))}
+          </ul>
+        </div>
+        <div className="glass rounded-2xl p-6">
+          <h2 className="text-lg font-semibold">Image Recommendations</h2>
+          <ul className="mt-3 list-disc space-y-2 pl-5 text-white/80">
+            {(audit.image_recommendations || []).map((item, idx) => (
+              <li key={`${item}-${idx}`}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      </section>
 
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold">Priority Actions</h2>
-            <ReportTable rows={actions} />
-          </section>
+      <section className="glass rounded-2xl p-6">
+        <h2 className="text-lg font-semibold">Factor Coverage</h2>
+        <p className="mt-2 text-white/80">
+          {audit.factor_coverage || 100}+ conversion factors analyzed across clarity, trust, UX, and revenue friction.
+        </p>
+        <ul className="mt-3 list-disc space-y-2 pl-5 text-white/80">
+          {(audit.factor_findings || []).slice(0, 8).map((item, idx) => (
+            <li key={`${item}-${idx}`}>{item}</li>
+          ))}
+        </ul>
+      </section>
 
-          <a
-            href={`/api/pdf?data=${encodeURIComponent(searchParams.data || "")}`}
-            className="inline-flex rounded-xl border border-white/20 px-4 py-2 text-sm hover:bg-white/10"
-          >
-            Download PDF Report
-          </a>
-        </>
-      )}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Priority Actions</h2>
+        <ReportTable rows={actions} />
+      </section>
+
+      <a
+        href={`/api/pdf?data=${encodeURIComponent(searchParams.data || "")}`}
+        className="inline-flex rounded-xl border border-white/20 px-4 py-2 text-sm hover:bg-white/10"
+      >
+        Download PDF Report
+      </a>
     </main>
   );
 }

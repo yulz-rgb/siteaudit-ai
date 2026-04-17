@@ -10,6 +10,13 @@ export type AuditResult = {
   top_issues: string[];
   quick_wins: string[];
   priority_actions: PriorityAction[];
+  inferred_goal?: string;
+  inferred_audience?: string;
+  location_culture_notes?: string;
+  text_recommendations?: string[];
+  image_recommendations?: string[];
+  factor_coverage?: number;
+  factor_findings?: string[];
   error?: string;
 };
 
