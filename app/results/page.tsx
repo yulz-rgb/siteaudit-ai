@@ -101,6 +101,8 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
   }
 
   const { audit, url } = parsed;
+  const goalForExport = searchParams.goal || audit.inferred_goal || "";
+  const audienceForExport = searchParams.targetAudience || audit.inferred_audience || "";
   const verdict = normalizeDiagnosis(audit.verdict);
   const issues = audit.top_issues;
   const quickWins = audit.quick_wins;
@@ -190,12 +192,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
       </section>
 
       <a
-        href={`/api/pdf?data=${encodeURIComponent(
-          JSON.stringify({
-            url,
-            audit
-          })
-        )}`}
+        href={`/api/pdf?url=${encodeURIComponent(url)}&goal=${encodeURIComponent(goalForExport)}&targetAudience=${encodeURIComponent(audienceForExport)}`}
         className="inline-flex rounded-xl border border-white/20 px-4 py-2 text-sm hover:bg-white/10"
       >
         Download PDF Report

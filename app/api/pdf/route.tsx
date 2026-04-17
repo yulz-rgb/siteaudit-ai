@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Document, Page, Text, View, StyleSheet, renderToStream } from "@react-pdf/renderer";
 import type { AuditResult } from "@/lib/types";
+import { scrapeHomepage } from "@/lib/scrape";
+import { generateAudit } from "@/lib/audit";
 
 const styles = StyleSheet.create({
   page: { padding: 32, fontSize: 11, color: "#111827" },
@@ -20,9 +22,24 @@ function parsePayload(data: string | null): { url: string; audit: AuditResult } 
   }
 }
 
+async function resolveAuditFromQuery(req: NextRequest): Promise<{ url: string; audit: AuditResult } | null> {
+  const url = req.nextUrl.searchParams.get("url");
+  if (!url) return null;
+  const goal = req.nextUrl.searchParams.get("goal") || "";
+  const targetAudience = req.nextUrl.searchParams.get("targetAudience") || "";
+
+  try {
+    const scraped = await scrapeHomepage(url);
+    const audit = await generateAudit(scraped, goal, targetAudience);
+    return { url, audit };
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: NextRequest) {
   const data = req.nextUrl.searchParams.get("data");
-  const parsed = parsePayload(data);
+  const parsed = parsePayload(data) || (await resolveAuditFromQuery(req));
   if (!parsed) {
     return NextResponse.json({ error: "Invalid report payload." }, { status: 400 });
   }
