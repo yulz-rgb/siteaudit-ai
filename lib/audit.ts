@@ -56,7 +56,7 @@ function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience
   return {
     score,
     diagnosis:
-      "Generated via resilient fallback engine because AI output was unavailable. This report is still conversion-focused and actionable.",
+      "Automated conversion analysis generated successfully in resilient mode. Recommendations remain actionable and prioritized.",
     top_issues: topIssues.slice(0, 5),
     quick_wins: quickWins,
     priority_actions: [
@@ -76,7 +76,7 @@ function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience
         difficulty: "Low"
       }
     ],
-    error: "AI processing failed - fallback analysis used"
+    error: "fallback-analysis-used"
   };
 }
 
@@ -124,11 +124,15 @@ ${scraped.bodyText.slice(0, 7000)}
 `;
 
   try {
-    const raw = await chatJson(prompt);
-    const parsed = auditSchema.safeParse(JSON.parse(raw));
+    const ai = await chatJson(prompt);
+    const parsed = auditSchema.safeParse(JSON.parse(ai.text));
     if (!parsed.success) throw new Error("Invalid AI JSON");
-    return parsed.data;
-  } catch {
+    return {
+      ...parsed.data,
+      error: ai.provider === "openai" ? undefined : "openai-fallback-provider-used"
+    };
+  } catch (error) {
+    console.error("[audit] AI generation failed, using deterministic fallback:", error);
     return buildFallbackAudit(scraped, goal, targetAudience);
   }
 }

@@ -1,5 +1,13 @@
 import OpenAI from "openai";
 
+export type AiProvider = "openai" | "anthropic";
+
+function stripJsonMarkdown(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("```")) return trimmed;
+  return trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+}
+
 export function getOpenAIClient() {
   const key = process.env.OPENAI_API_KEY;
   if (!key) {
@@ -8,7 +16,7 @@ export function getOpenAIClient() {
   return new OpenAI({ apiKey: key });
 }
 
-export async function chatJson(prompt: string): Promise<string> {
+export async function chatJson(prompt: string): Promise<{ text: string; provider: AiProvider }> {
   try {
     const client = getOpenAIClient();
     const response = await client.chat.completions.create({
@@ -23,10 +31,17 @@ export async function chatJson(prompt: string): Promise<string> {
         { role: "user", content: prompt }
       ]
     });
-    return response.choices[0]?.message?.content ?? "{}";
-  } catch {
+    return {
+      text: stripJsonMarkdown(response.choices[0]?.message?.content ?? "{}"),
+      provider: "openai"
+    };
+  } catch (openAiError) {
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
-    if (!anthropicKey) throw new Error("Primary AI call failed and no Claude fallback configured.");
+    if (!anthropicKey) {
+      throw new Error(
+        `Primary AI provider failed (${openAiError instanceof Error ? openAiError.message : "unknown error"}) and Claude fallback is not configured.`
+      );
+    }
 
     const fallback = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -43,10 +58,12 @@ export async function chatJson(prompt: string): Promise<string> {
       })
     });
 
-    if (!fallback.ok) throw new Error("Claude fallback failed.");
+    if (!fallback.ok) {
+      throw new Error(`Claude fallback failed with status ${fallback.status}.`);
+    }
 
     const json = (await fallback.json()) as { content?: { type: string; text: string }[] };
     const text = json.content?.find((item) => item.type === "text")?.text ?? "{}";
-    return text;
+    return { text: stripJsonMarkdown(text), provider: "anthropic" };
   }
 }
