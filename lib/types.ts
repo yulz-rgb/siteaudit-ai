@@ -52,6 +52,8 @@ export type AuditResult = {
     summary: string;
   };
   ai_recommendations: string[];
+  what_we_found: WebsiteEvidenceItem[];
+  evidence_insights: EvidenceInsight[];
   verdict: string;
   money_leak: string;
   top_issues: string[];
@@ -68,10 +70,51 @@ export type AuditResult = {
 };
 
 export type ScrapeResult = {
+  scrapeStatus: "rendered" | "html" | "fallback";
   url: string;
   title: string;
   metaDescription: string;
   bodyText: string;
   headings: { h1: string[]; h2: string[]; h3: string[] };
   images: { src: string; alt: string }[];
+  heroText: string[];
+  ctas: { text: string; selector: string; aboveFold: boolean }[];
+  pricingTexts: string[];
+  descriptionSnippets: string[];
+  structure: {
+    sectionCount: number;
+    navItems: string[];
+    hasBookingForm: boolean;
+    hasCalendar: boolean;
+  };
+  trustSignals: {
+    reviewMentions: string[];
+    reviewCountDetected: number;
+    starRatingDetected: number | null;
+    badgesOrLogos: string[];
+  };
+  media: {
+    imageCount: number;
+    imagesWithAlt: number;
+    estimatedImageBytes: number | null;
+  };
+  performance: {
+    loadTimeMs: number | null;
+    pageWeightBytes: number | null;
+  };
+  mobile: {
+    viewportIssues: string[];
+  };
+};
+
+export type WebsiteEvidenceItem = {
+  label: string;
+  value: string;
+};
+
+export type EvidenceInsight = {
+  issue: string;
+  evidence: string;
+  why_it_matters: string;
+  impact_percent: number;
 };

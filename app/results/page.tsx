@@ -8,9 +8,6 @@ type SearchParams = {
   url?: string;
   goal?: string;
   targetAudience?: string;
-  nightlyPrice?: string;
-  occupancyPercent?: string;
-  platform?: string;
   error?: string;
 };
 
@@ -52,12 +49,41 @@ function parseAuditData(data?: string): { url: string; goal?: string; targetAudi
 function fallbackScrape(url: string): ScrapeResult {
   const hostname = new URL(url).hostname;
   return {
+    scrapeStatus: "fallback",
     url,
     title: hostname,
     metaDescription: "",
     bodyText: `Homepage content could not be scraped for ${hostname}. Generate a best-effort conversion audit from the available context.`,
     headings: { h1: [], h2: [], h3: [] },
-    images: []
+    images: [],
+    heroText: [],
+    ctas: [],
+    pricingTexts: [],
+    descriptionSnippets: [],
+    structure: {
+      sectionCount: 0,
+      navItems: [],
+      hasBookingForm: false,
+      hasCalendar: false
+    },
+    trustSignals: {
+      reviewMentions: [],
+      reviewCountDetected: 0,
+      starRatingDetected: null,
+      badgesOrLogos: []
+    },
+    media: {
+      imageCount: 0,
+      imagesWithAlt: 0,
+      estimatedImageBytes: null
+    },
+    performance: {
+      loadTimeMs: null,
+      pageWeightBytes: null
+    },
+    mobile: {
+      viewportIssues: ["No evidence detected due to scraping fallback"]
+    }
   };
 }
 
@@ -65,28 +91,14 @@ async function buildAuditFromQuery(searchParams: SearchParams): Promise<{ url: s
   if (!searchParams.url) return null;
   const goal = searchParams.goal || "";
   const targetAudience = searchParams.targetAudience || "";
-  const nightlyPrice = Number(searchParams.nightlyPrice || "");
-  const occupancyPercent = Number(searchParams.occupancyPercent || "");
-  const platform = searchParams.platform || "both";
   let scraped: ScrapeResult;
   try {
     scraped = await scrapeHomepage(searchParams.url);
   } catch {
     scraped = fallbackScrape(searchParams.url);
   }
-  const audit = await generateAudit(
-    scraped,
-    goal,
-    targetAudience,
-    Number.isFinite(nightlyPrice) ? nightlyPrice : undefined,
-    Number.isFinite(occupancyPercent) ? occupancyPercent : undefined,
-    platform
-  );
+  const audit = await generateAudit(scraped, goal, targetAudience);
   return { url: searchParams.url, audit };
-}
-
-function formatEur(value: number): string {
-  return `€${Math.round(value).toLocaleString()}`;
 }
 
 export default async function ResultsPage({ searchParams }: { searchParams: SearchParams }) {
@@ -109,151 +121,68 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
   }
 
   const { audit, url } = parsed;
-  const goalForExport = searchParams.goal || audit.inferred_goal || "";
-  const audienceForExport = searchParams.targetAudience || audit.inferred_audience || "";
-  const penaltyPct = audit.total_penalty_percent || 0;
-  const lossRatio = Math.min(100, Math.max(0, penaltyPct));
-  const lossLow = audit.revenue_loss_yearly?.low || 0;
-  const lossHigh = audit.revenue_loss_yearly?.high || 0;
-  const currLow = audit.revenue_current_yearly?.low || 0;
-  const currHigh = audit.revenue_current_yearly?.high || 0;
-  const potLow = audit.revenue_potential_yearly?.low || 0;
-  const potHigh = audit.revenue_potential_yearly?.high || 0;
-
-  const top3Gain = audit.impact_simulator?.top3_fixes_gain_yearly?.high || 0;
-  const top5Gain = Math.round((lossHigh * 0.75));
-  const fullGain = lossHigh;
-  const card = "bg-[#121821] rounded-2xl p-6 border border-[#1F2A37]";
+  const card = "rounded-2xl border border-slate-200 bg-white p-6";
 
   return (
-    <div className="min-h-screen bg-[#0B0F14] text-white">
-      <div className="mx-auto max-w-7xl space-y-8 px-6 py-8">
-        <div className="flex items-center justify-between rounded-2xl border border-[#1F2A37] bg-[#121821] p-6">
-          <div className="flex flex-col">
-            <span className="text-sm text-gray-400">VillaAudit Score</span>
-            <div className="flex items-baseline gap-3">
-              <span className="text-4xl font-bold text-red-500">{audit.score_100}</span>
-              <span className="text-xl text-gray-400">/ 100</span>
-              <span className="text-sm text-red-500">↓ {audit.severity}</span>
-            </div>
-          </div>
-
-          <div className="text-center">
-            <div className="text-sm text-gray-400">Estimated Revenue Loss</div>
-            <div className="text-3xl font-bold text-red-400">
-              {formatEur(lossLow)} - {formatEur(lossHigh)} / year
-            </div>
-          </div>
-
-          <a
-            href={`/api/pdf?url=${encodeURIComponent(url)}&goal=${encodeURIComponent(goalForExport)}&targetAudience=${encodeURIComponent(audienceForExport)}`}
-            className="rounded-xl bg-blue-600 px-6 py-3 font-semibold hover:bg-blue-700"
-          >
-            Fix My Website →
-          </a>
+    <div className="min-h-screen bg-[#f6f8fc] text-slate-800">
+      <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Website-Specific Audit</p>
+          <h1 className="mt-2 text-2xl font-semibold">{url}</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            Only extracted evidence is used. No hypothetical revenue projections are shown.
+          </p>
         </div>
 
-        {error && <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</p>}
+        {error && <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>}
 
-        <div className="grid grid-cols-12 gap-6">
-          <div className="col-span-12 space-y-6 xl:col-span-8">
-            <div className={card}>
-              <h1 className="mb-3 text-2xl font-semibold">You are losing ~{lossRatio}% of potential bookings</h1>
-              <ul className="space-y-2 text-gray-300">
-                {audit.top_revenue_leaks.slice(0, 3).map((leak, i) => (
-                  <li key={`${leak.issue}-${i}`}>• {leak.issue}</li>
-                ))}
-              </ul>
-            </div>
+        <div className={card}>
+          <h2 className="mb-4 text-xl font-semibold">What We Found on Your Website</h2>
+          <ul className="grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
+            {audit.what_we_found.map((item) => (
+              <li key={item.label} className="rounded-lg bg-slate-50 px-3 py-2">
+                <span className="font-medium text-slate-600">{item.label}:</span> {item.value}
+              </li>
+            ))}
+          </ul>
+        </div>
 
-            <div className={card}>
-              <div className="mb-2 text-sm text-gray-400">Conversion Potential</div>
-              <div className="flex h-4 w-full overflow-hidden rounded-full bg-gray-800">
-                <div className="bg-blue-500" style={{ width: `${Math.max(1, 100 - lossRatio)}%` }} />
-                <div className="bg-red-500" style={{ width: `${Math.max(1, lossRatio)}%` }} />
+        <div className={card}>
+          <h2 className="mb-4 text-xl font-semibold">Critical Evidence-Based Issues</h2>
+          <div className="space-y-4">
+            {audit.evidence_insights.map((insight, idx) => (
+              <div key={`${insight.issue}-${idx}`} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="font-semibold text-slate-900">{idx + 1}. {insight.issue}</p>
+                <p className="mt-1 text-sm text-slate-700"><span className="font-medium">Detected:</span> {insight.evidence}</p>
+                <p className="mt-1 text-sm text-slate-700"><span className="font-medium">Why it matters:</span> {insight.why_it_matters}</p>
               </div>
-              <div className="mt-2 flex justify-between text-sm text-gray-400">
-                <span>Current: {Math.max(0, 100 - lossRatio)}%</span>
-                <span>Lost: {lossRatio}%</span>
-              </div>
-            </div>
-
-            <div className={card}>
-              <h2 className="mb-4 text-xl font-semibold">Top 5 Revenue Leaks</h2>
-              <div className="space-y-4">
-                {audit.top_revenue_leaks.map((leak, i) => (
-                  <div key={`${leak.issue}-${i}`} className="flex items-center justify-between border-b border-[#1F2A37] pb-3">
-                    <div>
-                      <div className="font-medium">{i + 1}. {leak.issue}</div>
-                      <div className="text-sm text-gray-400">{leak.explanation}</div>
-                    </div>
-                    <div className="font-semibold text-red-400">-{leak.impact_percent}%</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className={card}>
-              <h2 className="mb-4 text-xl font-semibold">Category Breakdown</h2>
-              <div className="grid grid-cols-2 gap-4 text-center sm:grid-cols-5">
-                {audit.category_breakdown.slice(0, 5).map((row) => (
-                  <div key={row.category} className="rounded-xl bg-[#0B0F14] p-4">
-                    <div className="text-sm text-gray-400">{row.category}</div>
-                    <div className="text-xl font-semibold">{Math.round(row.percent)}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="col-span-12 space-y-6 xl:col-span-4">
-            <div className={card}>
-              <h3 className="mb-4 text-lg font-semibold">Fastest Revenue Gains</h3>
-              <ul className="space-y-3 text-sm">
-                {audit.top_revenue_leaks.slice(0, 3).map((leak, i) => {
-                  const gain = Math.round((lossHigh * leak.impact_percent) / Math.max(1, penaltyPct));
-                  return (
-                    <li key={`${leak.issue}-${i}`} className="flex justify-between">
-                      <span>{leak.issue}</span>
-                      <span className="text-green-400">+{formatEur(gain)}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-
-            <div className={card}>
-              <h3 className="mb-4 text-lg font-semibold">Impact Simulator</h3>
-              <div className="space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <span>Fix top 3 issues</span>
-                  <span>+{formatEur(top3Gain)} / year</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Fix top 5 issues</span>
-                  <span>+{formatEur(top5Gain)} / year</span>
-                </div>
-                <div className="flex justify-between font-semibold">
-                  <span>Full optimisation</span>
-                  <span>+{formatEur(fullGain)} / year</span>
-                </div>
-              </div>
-            </div>
-
-            <div className={card}>
-              <h3 className="mb-4 text-lg font-semibold">AI Recommendations</h3>
-              <p className="text-sm text-gray-300">
-                {(audit.ai_recommendations && audit.ai_recommendations[0]) || "Booking CTA visibility is too low across early scroll depth."}
-                <br />
-                <br />
-                Fix: {(audit.ai_recommendations && audit.ai_recommendations[1]) || "Add a sticky “Check Availability” CTA on mobile and desktop."}
-              </p>
-            </div>
+            ))}
           </div>
         </div>
 
-        <div className="flex gap-3">
-          <Link href="/" className="inline-flex rounded-xl border border-white/20 px-4 py-2 text-sm hover:bg-white/10">
+        <div className={card}>
+          <h2 className="mb-4 text-xl font-semibold">Fix Priorities</h2>
+          <ul className="space-y-3">
+            {audit.priority_actions.map((action, idx) => (
+              <li key={`${action.action}-${idx}`} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+                <p className="font-medium text-slate-900">{action.action}</p>
+                <p className="mt-1">{action.why_it_matters}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className={card}>
+          <h2 className="mb-3 text-lg font-semibold">Validation Check</h2>
+          <ul className="space-y-1 text-sm text-slate-700">
+            <li>- Every insight references extracted evidence</li>
+            <li>- Missing data is explicitly labeled as no evidence detected</li>
+            <li>- No hypothetical revenue projections shown</li>
+          </ul>
+        </div>
+
+        <div>
+          <Link href="/" className="inline-flex rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
             Analyze another website
           </Link>
         </div>

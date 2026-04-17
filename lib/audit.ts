@@ -1,4 +1,4 @@
-import type { AuditResult, CategoryScore, RevenueLeak, ScrapeResult } from "@/lib/types";
+import type { AuditResult, CategoryScore, EvidenceInsight, RevenueLeak, ScrapeResult, WebsiteEvidenceItem } from "@/lib/types";
 import { chatJson } from "@/lib/openai";
 
 type Factor = {
@@ -18,6 +18,7 @@ type EvalCtx = {
   links: number;
   words: number;
   url: string;
+  scraped: ScrapeResult;
 };
 
 const CATEGORY_WEIGHTS: Record<CategoryScore["category"], number> = {
@@ -64,7 +65,8 @@ function makeContext(scraped: ScrapeResult): EvalCtx {
     images: scraped.images,
     links: linkMatches?.length || 0,
     words,
-    url: scraped.url
+    url: scraped.url,
+    scraped
   };
 }
 
@@ -166,39 +168,143 @@ function computeCategoryBreakdown(ctx: EvalCtx): { category_breakdown: CategoryS
   return { category_breakdown, score_100 };
 }
 
-function computePenalties(ctx: EvalCtx): { total: number; leaks: RevenueLeak[] } {
-  const triggers: RevenueLeak[] = [];
-  if (!hasAny(ctx.text, [/\breviews?\b/, /\btestimonial\b/, /\bguest rating\b/])) {
-    triggers.push({ issue: "No reviews or testimonial proof", impact_percent: PENALTIES.noReviews, explanation: "Guests cannot validate quality before booking." });
-  }
-  if (!ctx.h1.length || !/\bvilla|book|stay|holiday|retreat/.test(ctx.h1[0])) {
-    triggers.push({ issue: "Weak hero message", impact_percent: PENALTIES.weakHero, explanation: "First screen does not sell the stay outcome fast enough." });
-  }
-  if (!hasAny(ctx.text, [/\bbook now\b/, /\blimited\b/, /\bthis season\b/, /\bavailability\b/])) {
-    triggers.push({ issue: "No urgency cues", impact_percent: PENALTIES.noUrgency, explanation: "Users delay decisions without a timing trigger." });
-  }
-  if (!hasAny(ctx.text, [/€\s?\d+/, /\bper night\b/, /\bprice\b/])) {
-    triggers.push({ issue: "Pricing hidden or unclear", impact_percent: PENALTIES.hiddenPricing, explanation: "High-intent guests bounce when price framing is missing." });
-  }
-  if (!hasAny(ctx.text, [/\bmobile\b/, /\bwhatsapp\b/, /\bcall\b/, /\btap\b/])) {
-    triggers.push({ issue: "Poor mobile conversion cues", impact_percent: PENALTIES.poorMobile, explanation: "Most leisure traffic is mobile-first and needs direct action paths." });
-  }
-  if (ctx.words > 2600 || ctx.images.length > 28) {
-    triggers.push({ issue: "Slow load risk", impact_percent: PENALTIES.slowLoad, explanation: "Heavy pages reduce completed booking sessions." });
-  }
-  if (!hasAny(ctx.text, [/\bbook now\b/, /\bcheck availability\b/, /\breserve\b/])) {
-    triggers.push({ issue: "Weak booking CTA", impact_percent: PENALTIES.weakCta, explanation: "Visitors are not pushed into the booking flow." });
-  }
-  if (!hasAny(ctx.text, [/\bcancellation\b/, /\bpolicy\b/, /\bterms\b/])) {
-    triggers.push({ issue: "Missing trust stack policies", impact_percent: PENALTIES.noPolicy, explanation: "Risk objections stay unresolved at checkout time." });
-  }
-  if (!hasAny(ctx.text, [/\bhow it works\b/, /\bstep\b/, /\bavailability\b/, /\bcalendar\b/])) {
-    triggers.push({ issue: "Broken booking flow communication", impact_percent: PENALTIES.brokenFlow, explanation: "Guests do not understand the next step to secure dates." });
+function pushLeak(leaks: RevenueLeak[], insights: EvidenceInsight[], issue: string, impact_percent: number, evidence: string, why: string): void {
+  leaks.push({
+    issue,
+    impact_percent,
+    explanation: `${evidence} -> ${why}`
+  });
+  insights.push({
+    issue,
+    evidence,
+    why_it_matters: why,
+    impact_percent
+  });
+}
+
+function computePenalties(ctx: EvalCtx): { total: number; leaks: RevenueLeak[]; insights: EvidenceInsight[] } {
+  const leaks: RevenueLeak[] = [];
+  const insights: EvidenceInsight[] = [];
+  const s = ctx.scraped;
+
+  if (s.scrapeStatus === "fallback") {
+    pushLeak(
+      leaks,
+      insights,
+      "Limited crawl evidence",
+      12,
+      "Crawler could not extract rendered DOM data; using fallback text-only context",
+      "Without reliable page evidence, diagnostics are conservative and should be re-run with crawl access"
+    );
+    return { total: 12, leaks: leaks.slice(0, 5), insights };
   }
 
-  const sorted = triggers.sort((a, b) => b.impact_percent - a.impact_percent);
+  if (s.trustSignals.reviewCountDetected <= 0 && s.trustSignals.reviewMentions.length === 0) {
+    pushLeak(
+      leaks,
+      insights,
+      "No guest reviews detected",
+      PENALTIES.noReviews,
+      "No evidence of 'review', 'testimonial', or numeric review count detected on page",
+      "Without social proof, visitors cannot validate stay quality and trust drops before booking"
+    );
+  }
+  if (!s.heroText.length || !s.headings.h1.length) {
+    pushLeak(
+      leaks,
+      insights,
+      "Hero section lacks a strong value headline",
+      PENALTIES.weakHero,
+      `H1 detected: ${s.headings.h1[0] ? `"${s.headings.h1[0]}"` : "NONE detected"}`,
+      "The first screen must communicate differentiated value in seconds"
+    );
+  }
+  if (s.pricingTexts.length === 0) {
+    pushLeak(
+      leaks,
+      insights,
+      "No clear pricing anchor on page",
+      PENALTIES.hiddenPricing,
+      "No evidence of pricing text such as currency values, 'from', or 'per night'",
+      "Guests abandon when they cannot quickly assess budget fit"
+    );
+  }
+  if (!s.structure.hasBookingForm && !s.structure.hasCalendar) {
+    pushLeak(
+      leaks,
+      insights,
+      "No booking form or calendar detected",
+      PENALTIES.brokenFlow,
+      "Booking form: NOT detected; Calendar: NOT detected",
+      "Users cannot see the booking path and defer conversion"
+    );
+  }
+  const aboveFoldCtaCount = s.ctas.filter((cta) => cta.aboveFold).length;
+  if (s.ctas.length === 0 || aboveFoldCtaCount === 0) {
+    pushLeak(
+      leaks,
+      insights,
+      "Primary CTA is weak or below fold",
+      PENALTIES.weakCta,
+      `CTA count detected: ${s.ctas.length}; Above fold CTAs: ${aboveFoldCtaCount}`,
+      "If users cannot immediately act, intent decays before they enter booking"
+    );
+  }
+  const urgencyCtas = s.ctas.filter((cta) => /now|today|instant|availability|reserve/i.test(cta.text)).length;
+  if (urgencyCtas === 0) {
+    pushLeak(
+      leaks,
+      insights,
+      "No urgency in CTA wording",
+      PENALTIES.noUrgency,
+      `Detected CTA texts: ${s.ctas.slice(0, 4).map((c) => `"${c.text}"`).join(", ") || "NONE"}`,
+      "Urgency framing increases decision speed and booking completion"
+    );
+  }
+  if (s.mobile.viewportIssues.length > 0) {
+    pushLeak(
+      leaks,
+      insights,
+      "Mobile layout risks detected",
+      PENALTIES.poorMobile,
+      `Mobile checks: ${s.mobile.viewportIssues.join("; ")}`,
+      "Most villa traffic is mobile-first, so layout friction directly hurts conversion"
+    );
+  }
+  if ((s.performance.loadTimeMs || 0) > 3500 || (s.performance.pageWeightBytes || 0) > 4_500_000) {
+    pushLeak(
+      leaks,
+      insights,
+      "Slow page performance",
+      PENALTIES.slowLoad,
+      `Load time: ${s.performance.loadTimeMs ? `${s.performance.loadTimeMs}ms` : "No evidence detected"}; Page weight: ${s.performance.pageWeightBytes ? `${Math.round(s.performance.pageWeightBytes / 1024)}KB` : "No evidence detected"}`,
+      "Slow interactions increase abandonment before trust and offer are evaluated"
+    );
+  }
+  if (s.trustSignals.badgesOrLogos.length === 0) {
+    pushLeak(
+      leaks,
+      insights,
+      "No trust badges or partner logos detected",
+      PENALTIES.noTrustStack,
+      "No evidence of badge/logo markers such as verified, award, partner, or OTA trust marks",
+      "Visual trust markers reduce perceived risk at decision time"
+    );
+  }
+  if (!hasAny(ctx.text, [/\bcancellation\b/, /\brefund\b/, /\bterms\b/, /\bpolicy\b/])) {
+    pushLeak(
+      leaks,
+      insights,
+      "No cancellation/policy confidence cues",
+      PENALTIES.noPolicy,
+      "No evidence of cancellation/refund/policy text detected",
+      "Risk objections stay unresolved and suppress booking intent"
+    );
+  }
+
+  const sorted = leaks.sort((a, b) => b.impact_percent - a.impact_percent);
   const total = Math.min(70, sorted.reduce((sum, leak) => sum + leak.impact_percent, 0));
-  return { total, leaks: sorted.slice(0, 5) };
+  return { total, leaks: sorted.slice(0, 5), insights: insights.slice(0, 8) };
 }
 
 function inferTraffic(ctx: EvalCtx, score_100: number): { low: number; high: number } {
@@ -225,13 +331,17 @@ function asEurRange(range: { low: number; high: number }): string {
   return `€${range.low.toLocaleString()}–€${range.high.toLocaleString()}`;
 }
 
-async function buildAiRecommendations(leaks: RevenueLeak[], goal: string): Promise<string[]> {
-  const leakSummary = leaks.map((l) => `${l.issue} (${l.impact_percent}%)`).join(", ");
+async function buildAiRecommendations(leaks: RevenueLeak[], goal: string, evidence: WebsiteEvidenceItem[]): Promise<string[]> {
+  const leakSummary = leaks.map((l) => `${l.issue} (${l.impact_percent}%) - ${l.explanation}`).join("\n");
+  const evidenceSummary = evidence.map((e) => `${e.label}: ${e.value}`).join("\n");
   const prompt = `You explain CRO actions for villa booking sites.
 Return strict JSON: {"recommendations": ["...", "...", "..."]}.
 Goal: ${goal}
-Top detected leaks: ${leakSummary}
-Rules: practical, specific, 1 sentence each, no fluff.`;
+Top detected leaks:
+${leakSummary}
+Extracted evidence:
+${evidenceSummary}
+Rules: practical, specific, 1 sentence each, no fluff. Never invent new facts; only reference evidence above.`;
   try {
     const res = await chatJson(prompt);
     const parsed = JSON.parse(res.text) as { recommendations?: string[] };
@@ -244,6 +354,27 @@ Rules: practical, specific, 1 sentence each, no fluff.`;
   return leaks.slice(0, 4).map((leak) => `Fix "${leak.issue.toLowerCase()}" first to recover high-intent booking demand faster.`);
 }
 
+function buildWhatWeFound(scraped: ScrapeResult): WebsiteEvidenceItem[] {
+  const firstCta = scraped.ctas[0];
+  const firstPricing = scraped.pricingTexts[0] || "No evidence detected";
+  return [
+    { label: "H1", value: scraped.headings.h1[0] || "No evidence detected" },
+    { label: "Hero text", value: scraped.heroText[0] || "No evidence detected" },
+    { label: "Primary CTA", value: firstCta ? `"${firstCta.text}" (${firstCta.aboveFold ? "above fold" : "below fold"})` : "No evidence detected" },
+    { label: "CTA count", value: `${scraped.ctas.length}` },
+    { label: "Pricing text", value: firstPricing },
+    { label: "Booking form", value: scraped.structure.hasBookingForm ? "Detected" : "Not detected" },
+    { label: "Calendar", value: scraped.structure.hasCalendar ? "Detected" : "Not detected" },
+    { label: "Reviews", value: scraped.trustSignals.reviewCountDetected > 0 ? `${scraped.trustSignals.reviewCountDetected} references detected` : "No evidence detected" },
+    { label: "Star rating", value: scraped.trustSignals.starRatingDetected ? `${scraped.trustSignals.starRatingDetected}/5 detected` : "No evidence detected" },
+    { label: "Trust badges/logos", value: scraped.trustSignals.badgesOrLogos.length ? scraped.trustSignals.badgesOrLogos.slice(0, 2).join("; ") : "No evidence detected" },
+    { label: "Images", value: `${scraped.media.imageCount} total, ${scraped.media.imagesWithAlt} with alt` },
+    { label: "Load time", value: scraped.performance.loadTimeMs ? `${scraped.performance.loadTimeMs}ms` : "No evidence detected" },
+    { label: "Page weight", value: scraped.performance.pageWeightBytes ? `${Math.round(scraped.performance.pageWeightBytes / 1024)} KB` : "No evidence detected" },
+    { label: "Mobile check", value: scraped.mobile.viewportIssues.length ? scraped.mobile.viewportIssues.join("; ") : "No obvious viewport issues detected" }
+  ];
+}
+
 export async function generateAudit(
   scraped: ScrapeResult,
   goal?: string,
@@ -254,7 +385,7 @@ export async function generateAudit(
 ): Promise<AuditResult> {
   const ctx = makeContext(scraped);
   const { category_breakdown, score_100 } = computeCategoryBreakdown(ctx);
-  const { total, leaks } = computePenalties(ctx);
+  const { total, leaks, insights } = computePenalties(ctx);
   const benchmarkLow = 0.015;
   const benchmarkHigh = 0.03;
   const adjustedLow = Number((benchmarkLow * (1 - total / 100)).toFixed(4));
@@ -280,9 +411,10 @@ export async function generateAudit(
   const resolvedAudience = targetAudience?.trim() || "Families, couples, and groups planning premium stays";
   const resolvedPlatform = platform?.trim() || "both";
   const occupancy = typeof occupancyPercent === "number" && occupancyPercent > 0 ? occupancyPercent : undefined;
+  const whatWeFound = buildWhatWeFound(scraped);
 
-  const quickWins = leaks.slice(0, 3).map((l) => `Fix ${l.issue.toLowerCase()} to recover up to ${l.impact_percent}% conversion drag.`);
-  const aiRecommendations = await buildAiRecommendations(leaks, resolvedGoal);
+  const quickWins = leaks.slice(0, 3).map((l) => `${l.issue}: ${l.explanation}`);
+  const aiRecommendations = await buildAiRecommendations(leaks, resolvedGoal, whatWeFound);
   const topIssueStrings = leaks.map((l) => `${l.issue} (${l.impact_percent}% impact)`);
   const top3Impact = Math.min(35, leaks.slice(0, 3).reduce((s, l) => s + l.impact_percent, 0));
   const top3Gain = {
@@ -314,8 +446,10 @@ export async function generateAudit(
       summary: `If you fix the top 3 leaks, projected upside is ${asEurRange(top3Gain)} / year.`
     },
     ai_recommendations: aiRecommendations,
-    verdict: `You are losing ~${total}% of bookings because high-intent visitors are meeting friction before confidence.`,
-    money_leak: leaks[0]?.issue || "Booking confidence is weaker than booking intent.",
+    what_we_found: [{ label: "Crawl mode", value: scraped.scrapeStatus }, ...whatWeFound],
+    evidence_insights: insights,
+    verdict: `Evidence-based diagnosis: ${leaks[0]?.explanation || "No major leaks detected from current evidence."}`,
+    money_leak: leaks[0]?.explanation || "No evidence of a major leak detected.",
     top_issues: topIssueStrings,
     quick_wins: quickWins,
     priority_actions: leaks.slice(0, 5).map((l, idx) => ({

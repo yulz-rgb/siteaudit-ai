@@ -37,15 +37,6 @@ export default function HomePage() {
                 Analyze Website
               </button>
             </div>
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <input name="nightlyPrice" type="number" min="0" step="1" placeholder="Nightly price (€)" className="h-12 rounded-lg border border-[#d8dfeb] px-3 text-sm text-[#344863] placeholder:text-[#9aa7ba]" />
-              <input name="occupancyPercent" type="number" min="0" max="100" step="1" placeholder="Occupancy %" className="h-12 rounded-lg border border-[#d8dfeb] px-3 text-sm text-[#344863] placeholder:text-[#9aa7ba]" />
-              <select name="platform" className="h-12 rounded-lg border border-[#d8dfeb] px-3 text-sm text-[#344863]">
-                <option value="both">Direct + OTA</option>
-                <option value="direct">Direct only</option>
-                <option value="ota">OTA heavy</option>
-              </select>
-            </div>
           </form>
           <p className="text-xl text-[#6a7b93]">Instant, automated, and free analysis of your villa rental website.</p>
         </div>

@@ -26,6 +26,10 @@ describe("extractFromHtml", () => {
     expect(result.metaDescription).toBe("Demo description");
     expect(result.headings.h1).toEqual(["Main Promise"]);
     expect(result.images[0]).toEqual({ src: "/hero.png", alt: "Hero image" });
+    expect(result.structure.sectionCount).toBeGreaterThanOrEqual(0);
+    expect(Array.isArray(result.ctas)).toBe(true);
+    expect(result.trustSignals.reviewCountDetected).toBeGreaterThanOrEqual(0);
+    expect(result.media.imageCount).toBe(1);
     expect(result.bodyText.length).toBeGreaterThan(30);
   });
 });
