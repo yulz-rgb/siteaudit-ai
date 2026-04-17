@@ -5,6 +5,7 @@ import { scrapeHomepage } from "@/lib/scrape";
 import { generateAudit } from "@/lib/audit";
 import { getStripe } from "@/lib/stripe";
 import { normalizeUrl } from "@/lib/utils";
+import type { ScrapeResult } from "@/lib/types";
 
 export async function runAudit(formData: FormData) {
   const url = String(formData.get("url") || "");
@@ -20,7 +21,22 @@ export async function runAudit(formData: FormData) {
   }
 
   try {
-    const scraped = await scrapeHomepage(parsedUrl);
+    let scraped: ScrapeResult;
+    try {
+      scraped = await scrapeHomepage(parsedUrl);
+    } catch {
+      // Never hard-fail the user flow on scrape instability.
+      const hostname = new URL(parsedUrl).hostname;
+      scraped = {
+        url: parsedUrl,
+        title: hostname,
+        metaDescription: "",
+        bodyText: `Homepage content could not be scraped for ${hostname}. Generate a best-effort conversion audit from the available context.`,
+        headings: { h1: [], h2: [], h3: [] },
+        images: []
+      };
+    }
+
     const audit = await generateAudit(scraped, goal, targetAudience);
 
     const payload = encodeURIComponent(
