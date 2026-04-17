@@ -41,7 +41,19 @@ function parseAiJsonLenient(raw: string): unknown {
   }
 }
 
+type SiteVertical = "villa" | "ecommerce" | "saas" | "service" | "generic";
+
+function detectVertical(scraped: ScrapeResult): SiteVertical {
+  const text = `${scraped.url} ${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
+  if (/villa|holiday home|vacation rental|airbnb|booking|stay|guests|nightly/.test(text)) return "villa";
+  if (/shop|store|cart|checkout|product|amazon/.test(text)) return "ecommerce";
+  if (/saas|software|platform|tool|app|subscription/.test(text)) return "saas";
+  if (/agency|service|consult|quote|appointment|book call/.test(text)) return "service";
+  return "generic";
+}
+
 function inferGoalFromContent(scraped: ScrapeResult): string {
+  if (detectVertical(scraped) === "villa") return "Increase direct villa bookings and occupancy";
   const text = `${scraped.url} ${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
   if (/audit|conversion|saas|software|tool|app/.test(text)) return "Increase qualified leads and paid subscriptions";
   if (/book|reservation|villa|hotel|airbnb|stay/.test(text)) return "Increase qualified bookings";
@@ -65,6 +77,9 @@ function sanitizeAudience(url: string, audience: string, fallbackAudience: strin
   if (/siteaudit|audit|saas|software|tool|app/.test(hostAndAudience) && /leisure travelers|vacation|holiday/.test(hostAndAudience)) {
     return "Founders, marketers, and growth teams improving conversion performance";
   }
+  if (/villa|holiday|stay|booking|airbnb/.test(hostAndAudience) && /founders|marketers|growth teams|b2b/.test(hostAndAudience)) {
+    return "Couples, families, and small groups planning high-intent holiday stays";
+  }
   return audience || fallbackAudience;
 }
 
@@ -78,6 +93,9 @@ function sanitizeRewriteHeadline(headline: string, audience: string, goal: strin
 }
 
 function inferAudienceFromContent(scraped: ScrapeResult): string {
+  if (detectVertical(scraped) === "villa") {
+    return "Couples, families, and small groups planning high-intent holiday stays";
+  }
   const host = new URL(scraped.url).hostname.toLowerCase();
   const text = `${scraped.url} ${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
   if (/siteaudit|audit|saas|software|app|tool|platform/.test(host + " " + text)) {
@@ -102,6 +120,7 @@ function inferAudienceFromContent(scraped: ScrapeResult): string {
 }
 
 function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience?: string): AuditResult {
+  const vertical = detectVertical(scraped);
   const resolvedGoal = goal || inferGoalFromContent(scraped);
   const normalizedGoalForCopy = normalizeGoalForCopy(resolvedGoal);
   const resolvedAudience = targetAudience || inferAudienceFromContent(scraped);
@@ -160,6 +179,9 @@ function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience
     "Use an urgency-focused CTA variant (for example: 'Book your consultation today').",
     "Show a concrete offer or package outcome before users scroll."
   ];
+  if (vertical === "villa") {
+    quickWins.unshift("Show nightly price anchor, cleaning fee clarity, and calendar availability above the fold.");
+  }
 
   const estimatedImpactLow = Math.max(8, Math.round((10 - score) * 2));
   const estimatedImpactHigh = estimatedImpactLow + 12;
@@ -167,17 +189,24 @@ function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience
   return {
     score,
     verdict:
-      "This site is underperforming because the conversion intent is weaker than the attention required to trust and act.",
+      vertical === "villa"
+        ? "This villa site underperforms because booking confidence is weaker than booking intent in the first visit."
+        : "This site is underperforming because the conversion intent is weaker than the attention required to trust and act.",
     money_leak:
-      "Revenue is leaking in the first-screen experience where visitors do not get enough proof and urgency to commit.",
+      vertical === "villa"
+        ? "Bookings are leaking in the first-screen journey where pricing/trust details are not clear enough to commit."
+        : "Revenue is leaking in the first-screen experience where visitors do not get enough proof and urgency to commit.",
     estimated_impact: `Fixing these issues could increase conversions by ${estimatedImpactLow}-${estimatedImpactHigh}%.`,
     top_issues: topIssues.slice(0, 5),
     quick_wins: quickWins,
     inferred_goal: resolvedGoal,
     inferred_audience: resolvedAudience,
     rewrite: {
-      hero_headline: `Get better results faster with a clearer offer and stronger trust signals for ${resolvedAudience.toLowerCase()}.`,
-      cta: "Get Your Conversion Plan"
+      hero_headline:
+        vertical === "villa"
+          ? "Book your ideal villa stay with transparent pricing, trusted reviews, and instant availability."
+          : `Get better results faster with a clearer offer and stronger trust signals for ${resolvedAudience.toLowerCase()}.`,
+      cta: vertical === "villa" ? "Check Availability & Book Now" : "Get Your Conversion Plan"
     },
     priority_actions: [
       {
@@ -210,13 +239,22 @@ export async function generateAudit(
 ): Promise<AuditResult> {
   const resolvedGoal = goal || inferGoalFromContent(scraped);
   const resolvedAudience = targetAudience || inferAudienceFromContent(scraped);
+  const vertical = detectVertical(scraped);
   const prompt = `
 SYSTEM:
-You are a senior conversion strategist.
+You are a short-term rental conversion expert.
 
-You do NOT give generic advice.
+You specialise in:
+- villa websites
+- Airbnb-style bookings
+- hospitality UX
+- pricing psychology
 
-You diagnose websites like a revenue operator.
+You think in:
+- occupancy rate
+- booking friction
+- trust
+- perceived luxury
 
 INPUT:
 - website content
@@ -228,7 +266,7 @@ TASK:
    - who it targets
    - what action user should take
 2. Detect:
-   - where money is being lost
+   - where bookings/revenue are being lost
    - what is unclear or weak
    - what blocks conversion
 3. Assign REAL score:
@@ -265,10 +303,12 @@ RULES:
 - No generic advice
 - Every point must be specific
 - Keep score realistic and strict
+- Everything must map to BOOKINGS and REVENUE.
 
 Website URL: ${scraped.url}
 Goal: ${resolvedGoal}
 Audience Hint: ${resolvedAudience}
+Vertical Hint: ${vertical}
 Title: ${scraped.title}
 Meta description: ${scraped.metaDescription}
 Headings: ${JSON.stringify(scraped.headings)}
@@ -285,15 +325,19 @@ ${scraped.bodyText.slice(0, 7000)}
     const safeAudience = sanitizeAudience(scraped.url, parsed.data.inferred_audience || resolvedAudience, resolvedAudience);
     const safeGoal = parsed.data.inferred_goal || resolvedGoal;
     const safeHeadline = sanitizeRewriteHeadline(parsed.data.rewrite?.hero_headline || "", safeAudience, safeGoal);
+    const isVilla = vertical === "villa";
     return {
       ...parsed.data,
       score: clampedScore,
       estimated_impact: parsed.data.estimated_impact || `Fixing these could increase conversions by ${Math.round((10 - clampedScore) * 2)}-${Math.round((10 - clampedScore) * 3.2)}%.`,
       inferred_goal: safeGoal,
-      inferred_audience: safeAudience,
+      inferred_audience: isVilla ? "Couples, families, and small groups planning high-intent holiday stays" : safeAudience,
       rewrite: {
-        hero_headline: safeHeadline,
-        cta: parsed.data.rewrite?.cta || "Start Converting Better"
+        hero_headline:
+          isVilla && !/villa|stay|book|holiday|guest|retreat/i.test(safeHeadline)
+            ? "Book your ideal villa stay with transparent pricing, trusted reviews, and instant availability."
+            : safeHeadline,
+        cta: isVilla ? "Check Availability & Book Now" : parsed.data.rewrite?.cta || "Start Converting Better"
       },
       quick_wins:
         parsed.data.quick_wins.length > 0
@@ -313,7 +357,11 @@ ${scraped.bodyText.slice(0, 7000)}
         }
       ],
       money_leak: parsed.data.money_leak || "Revenue leaks when users do not get trust + action clarity in the first screen.",
-      verdict: parsed.data.verdict || "This site is underperforming due to weak conversion clarity in key decision moments.",
+      verdict:
+        parsed.data.verdict ||
+        (isVilla
+          ? "This villa listing underperforms because booking intent is not converted into booking confidence fast enough."
+          : "This site is underperforming due to weak conversion clarity in key decision moments."),
       // keep provider diagnostic without leaking to UI
       error: ai.provider === "openai" ? undefined : "openai-fallback-provider-used"
     };
