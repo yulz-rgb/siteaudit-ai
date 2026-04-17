@@ -33,8 +33,8 @@ export async function runAudit(formData: FormData) {
     );
 
     redirect(`/results?data=${payload}`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected audit failure.";
+  } catch {
+    const message = "Audit failed. Please retry or try a different website.";
     redirect(`/results?error=${encodeURIComponent(message)}`);
   }
 }
