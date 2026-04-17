@@ -43,6 +43,7 @@ function parseAiJsonLenient(raw: string): unknown {
 
 function inferGoalFromContent(scraped: ScrapeResult): string {
   const text = `${scraped.url} ${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
+  if (/audit|conversion|saas|software|tool|app/.test(text)) return "Increase qualified leads and paid subscriptions";
   if (/book|reservation|villa|hotel|airbnb|stay/.test(text)) return "Increase qualified bookings";
   if (/shop|buy|cart|checkout|product|store/.test(text)) return "Increase product sales";
   if (/agency|service|consult|contact|quote/.test(text)) return "Generate qualified service leads";
@@ -50,13 +51,25 @@ function inferGoalFromContent(scraped: ScrapeResult): string {
   return "Increase qualified conversions and revenue";
 }
 
+function normalizeGoalForCopy(goal: string): string {
+  const text = goal.toLowerCase();
+  if (/booking|reservation|stay|villa|hotel/.test(text)) return "increase qualified bookings";
+  if (/lead|enquiry|inquiry|quote|contact/.test(text)) return "generate more qualified leads";
+  if (/sale|revenue|purchase|checkout|order/.test(text)) return "increase sales revenue";
+  if (/signup|trial|demo|subscription/.test(text)) return "increase qualified signups";
+  return "increase conversions and revenue";
+}
+
 function inferAudienceFromContent(scraped: ScrapeResult): string {
   const host = new URL(scraped.url).hostname.toLowerCase();
   const text = `${scraped.url} ${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
+  if (/siteaudit|audit|saas|software|app|tool|platform/.test(host + " " + text)) {
+    return "Founders, marketers, and growth teams improving conversion performance";
+  }
   if (/amazon|shop|store|checkout|cart|product/.test(host + " " + text)) {
     return "Online shoppers comparing price, trust, and delivery confidence";
   }
-  if (/villa|travel|holiday|vacation|stay|reservation|booking/.test(text)) {
+  if (/villa|travel|holiday|vacation|stay|reservation/.test(text)) {
     return "Leisure travelers comparing accommodation options";
   }
   if (/wedding|event|florist|venue/.test(text)) {
@@ -73,6 +86,7 @@ function inferAudienceFromContent(scraped: ScrapeResult): string {
 
 function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience?: string): AuditResult {
   const resolvedGoal = goal || inferGoalFromContent(scraped);
+  const normalizedGoalForCopy = normalizeGoalForCopy(resolvedGoal);
   const resolvedAudience = targetAudience || inferAudienceFromContent(scraped);
   const text = `${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
   const ctaKeywords = ["book", "buy", "start", "get started", "contact", "call", "shop", "subscribe"];
@@ -123,7 +137,7 @@ function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience
   }
 
   const quickWins = [
-    `Add one clear above-the-fold CTA aligned to "${resolvedGoal}".`,
+    `Add one clear above-the-fold CTA aligned to "${normalizedGoalForCopy}".`,
     `Rewrite hero copy for one audience: ${resolvedAudience}.`,
     "Place a trust block (reviews/logos/results) beside the primary CTA.",
     "Use an urgency-focused CTA variant (for example: 'Book your consultation today').",
@@ -145,7 +159,7 @@ function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience
     inferred_goal: resolvedGoal,
     inferred_audience: resolvedAudience,
     rewrite: {
-      hero_headline: `Get ${resolvedGoal.toLowerCase()} faster with a clearer offer and stronger trust signals.`,
+      hero_headline: `Get better results faster with a clearer offer and stronger trust signals for ${resolvedAudience.toLowerCase()}.`,
       cta: "Get Your Conversion Plan"
     },
     priority_actions: [
