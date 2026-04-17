@@ -4,11 +4,11 @@ export function ScoreCard({ score }: { score: number }) {
 
   return (
     <div className="glass rounded-2xl p-6">
-      <p className="text-sm uppercase tracking-wide text-white/60">Conversion Score</p>
+      <p className="text-sm uppercase tracking-wide text-white/60">Booking Conversion Health</p>
       <div className={`mt-4 inline-flex h-28 w-28 items-center justify-center rounded-full border-4 ${ring}`}>
         <span className="text-4xl font-bold">{clamped.toFixed(1)}</span>
       </div>
-      <p className="mt-4 text-sm text-white/70">Score out of 10 based on clarity, trust, and conversion readiness.</p>
+      <p className="mt-4 text-sm text-white/70">Score out of 10 based on trust, clarity, and booking readiness.</p>
     </div>
   );
 }

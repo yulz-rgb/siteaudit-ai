@@ -107,9 +107,13 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
   const issues = audit.top_issues;
   const quickWins = audit.quick_wins;
   const actions = audit.priority_actions;
+  const audience = audit.inferred_audience || "villa owners and managers";
+  const audienceTone = /families|couples|groups|guests/i.test(audience)
+    ? "Guest-first clarity and trust signals are critical for this audience."
+    : "Decision-maker clarity and booking confidence are critical for this audience.";
 
   return (
-    <main className="space-y-6">
+    <main className="space-y-7">
       <header className="space-y-2">
         <p className="text-sm text-white/60">Audit target</p>
         <h1 className="text-2xl font-semibold sm:text-3xl">{url}</h1>
@@ -117,7 +121,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
 
       {error && <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</p>}
 
-      <section className="glass rounded-2xl border-emerald-400/30 bg-emerald-500/10 p-5">
+      <section className="glass rounded-3xl border-emerald-400/30 bg-emerald-500/10 p-5">
         <p className="text-sm font-medium text-emerald-200">Estimated Impact</p>
         <p className="mt-1 text-lg font-semibold text-emerald-100">
           {audit.estimated_impact || "Fixing these could increase conversions by 10-25%."}
@@ -126,29 +130,30 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
 
       <div className="grid gap-5 lg:grid-cols-3">
         <ScoreCard score={audit.score} />
-        <div className="glass rounded-2xl p-6 lg:col-span-2">
+        <div className="glass rounded-3xl p-6 lg:col-span-2">
           <h2 className="text-lg font-semibold">This site is losing conversions because...</h2>
           <p className="mt-2 text-white/80">{verdict}</p>
+          <p className="mt-3 text-sm text-indigo-200">{audienceTone}</p>
         </div>
       </div>
 
-      <section className="glass rounded-2xl border-rose-400/30 bg-rose-500/10 p-6">
+      <section className="glass rounded-3xl border-rose-400/30 bg-rose-500/10 p-6">
         <h2 className="text-lg font-semibold text-rose-200">Money Leak</h2>
         <p className="mt-2 text-rose-100">{audit.money_leak}</p>
       </section>
 
       <section className="grid gap-4 md:grid-cols-2">
-        <div className="glass rounded-2xl p-6">
+        <div className="glass rounded-3xl p-6">
           <h2 className="text-lg font-semibold">Inferred Goal</h2>
           <p className="mt-2 text-white/80">{audit.inferred_goal || "Increase conversions and revenue."}</p>
         </div>
-        <div className="glass rounded-2xl p-6">
+        <div className="glass rounded-3xl p-6">
           <h2 className="text-lg font-semibold">Inferred Audience</h2>
           <p className="mt-2 text-white/80">{audit.inferred_audience || "High-intent visitors comparing alternatives."}</p>
         </div>
       </section>
 
-      <section className="glass rounded-2xl p-6">
+      <section className="glass rounded-3xl p-6">
         <h2 className="text-lg font-semibold">Top Issues</h2>
         <ul className="mt-3 list-disc space-y-2 pl-5 text-white/80">
           {issues.map((issue, idx) => (
@@ -157,7 +162,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
         </ul>
       </section>
 
-      <section className="glass rounded-2xl p-6">
+      <section className="glass rounded-3xl p-6">
         <h2 className="text-lg font-semibold">Quick Wins</h2>
         <ul className="mt-3 space-y-2 text-white/80">
           {quickWins.map((item, idx) => (
@@ -174,7 +179,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
         <ReportTable rows={actions} />
       </section>
 
-      <section className="glass rounded-2xl p-6">
+      <section className="glass rounded-3xl p-6">
         <h2 className="text-lg font-semibold">Instant Fix</h2>
         <div className="mt-3 space-y-4">
           <div>

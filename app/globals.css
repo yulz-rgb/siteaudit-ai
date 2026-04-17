@@ -7,11 +7,22 @@
 }
 
 body {
-  @apply bg-bg text-white antialiased;
-  background-image: radial-gradient(circle at 10% 20%, rgba(168, 85, 247, 0.12), transparent 30%),
-    radial-gradient(circle at 90% 20%, rgba(59, 130, 246, 0.12), transparent 35%);
+  @apply text-white antialiased;
+  background-color: #05060d;
+  background-image: radial-gradient(circle at 12% 18%, rgba(129, 140, 248, 0.14), transparent 34%),
+    radial-gradient(circle at 85% 14%, rgba(16, 185, 129, 0.1), transparent 32%),
+    linear-gradient(180deg, #05060d 0%, #070915 42%, #06070f 100%);
 }
 
 .glass {
-  @apply border border-white/10 bg-white/5 backdrop-blur;
+  @apply border border-white/10 bg-white/[0.04] backdrop-blur;
+  box-shadow: 0 14px 40px rgba(2, 6, 23, 0.35);
+}
+
+.section-title {
+  @apply text-lg font-semibold tracking-tight text-white;
+}
+
+.section-subtitle {
+  @apply text-sm text-white/65;
 }
