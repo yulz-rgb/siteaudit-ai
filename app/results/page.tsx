@@ -113,95 +113,103 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
     : "Decision-maker clarity and booking confidence are critical for this audience.";
 
   return (
-    <main className="space-y-7">
-      <header className="space-y-2">
-        <p className="text-sm text-white/60">Audit target</p>
-        <h1 className="text-2xl font-semibold sm:text-3xl">{url}</h1>
+    <main className="space-y-8">
+      <header className="space-y-3 border-b border-white/10 pb-6">
+        <p className="text-xs uppercase tracking-wide text-white/45">Villa Booking Optimiser Report</p>
+        <h1 className="text-2xl font-semibold leading-tight sm:text-3xl">{url}</h1>
       </header>
 
       {error && <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</p>}
 
-      <section className="glass rounded-3xl border-emerald-400/30 bg-emerald-500/10 p-5">
-        <p className="text-sm font-medium text-emerald-200">Estimated Impact</p>
-        <p className="mt-1 text-lg font-semibold text-emerald-100">
-          {audit.estimated_impact || "Fixing these could increase conversions by 10-25%."}
-        </p>
-      </section>
+      <div className="grid gap-6 lg:grid-cols-[330px_1fr]">
+        <aside className="space-y-5 lg:sticky lg:top-6 lg:h-fit">
+          <section className="glass rounded-3xl border-emerald-400/30 bg-emerald-500/10 p-5">
+            <p className="text-xs uppercase tracking-wide text-emerald-200/90">Estimated Impact</p>
+            <p className="mt-2 text-xl font-semibold text-emerald-100">
+              {audit.estimated_impact || "Fixing these could increase conversions by 10-25%."}
+            </p>
+          </section>
 
-      <div className="grid gap-5 lg:grid-cols-3">
-        <ScoreCard score={audit.score} />
-        <div className="glass rounded-3xl p-6 lg:col-span-2">
-          <h2 className="text-lg font-semibold">This site is losing conversions because...</h2>
-          <p className="mt-2 text-white/80">{verdict}</p>
-          <p className="mt-3 text-sm text-indigo-200">{audienceTone}</p>
+          <ScoreCard score={audit.score} />
+
+          <section className="glass rounded-3xl p-5">
+            <p className="text-xs uppercase tracking-wide text-white/50">Audience Lens</p>
+            <p className="mt-2 text-sm text-white/85">{audienceTone}</p>
+          </section>
+
+          <section className="glass rounded-3xl p-5">
+            <p className="text-xs uppercase tracking-wide text-white/50">Inferred Goal</p>
+            <p className="mt-2 text-sm text-white/90">{audit.inferred_goal || "Increase conversions and revenue."}</p>
+          </section>
+
+          <section className="glass rounded-3xl p-5">
+            <p className="text-xs uppercase tracking-wide text-white/50">Inferred Audience</p>
+            <p className="mt-2 text-sm text-white/90">{audit.inferred_audience || "High-intent visitors comparing alternatives."}</p>
+          </section>
+        </aside>
+
+        <div className="space-y-5">
+          <section className="glass rounded-3xl p-6">
+            <h2 className="text-xl font-semibold">Why This Site Is Underperforming</h2>
+            <p className="mt-3 text-white/85">{verdict}</p>
+          </section>
+
+          <section className="glass rounded-3xl border-rose-400/35 bg-rose-500/10 p-6">
+            <h3 className="text-lg font-semibold text-rose-200">Biggest Money Leak</h3>
+            <p className="mt-2 text-rose-100">{audit.money_leak}</p>
+          </section>
+
+          <section className="glass rounded-3xl p-6">
+            <h3 className="text-lg font-semibold">Top Issues</h3>
+            <ul className="mt-3 list-disc space-y-2 pl-5 text-white/80">
+              {issues.map((issue, idx) => (
+                <li key={`${issue}-${idx}`}>{issue}</li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="glass rounded-3xl p-6">
+            <h3 className="text-lg font-semibold">Quick Wins</h3>
+            <ul className="mt-3 space-y-2 text-white/85">
+              {quickWins.map((item, idx) => (
+                <li key={`${item}-${idx}`} className="flex items-start gap-2">
+                  <span>✅</span>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-lg font-semibold">Priority Fixes</h3>
+            <ReportTable rows={actions} />
+          </section>
+
+          <section className="glass rounded-3xl p-6">
+            <h3 className="text-lg font-semibold">Instant Fix</h3>
+            <div className="mt-3 space-y-4">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-white/50">Improved Hero Headline</p>
+                <p className="mt-1 text-white/90">{audit.rewrite.hero_headline}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-white/50">Improved CTA</p>
+                <p className="mt-1 text-white/90">{audit.rewrite.cta}</p>
+              </div>
+              <button className="rounded-xl bg-gradient-to-r from-indigo-500 via-violet-500 to-emerald-500 px-4 py-2 font-semibold text-white">
+                Optimise My Listing
+              </button>
+            </div>
+          </section>
+
+          <a
+            href={`/api/pdf?url=${encodeURIComponent(url)}&goal=${encodeURIComponent(goalForExport)}&targetAudience=${encodeURIComponent(audienceForExport)}`}
+            className="inline-flex rounded-xl border border-white/20 px-4 py-2 text-sm hover:bg-white/10"
+          >
+            Download PDF Report
+          </a>
         </div>
       </div>
-
-      <section className="glass rounded-3xl border-rose-400/30 bg-rose-500/10 p-6">
-        <h2 className="text-lg font-semibold text-rose-200">Money Leak</h2>
-        <p className="mt-2 text-rose-100">{audit.money_leak}</p>
-      </section>
-
-      <section className="grid gap-4 md:grid-cols-2">
-        <div className="glass rounded-3xl p-6">
-          <h2 className="text-lg font-semibold">Inferred Goal</h2>
-          <p className="mt-2 text-white/80">{audit.inferred_goal || "Increase conversions and revenue."}</p>
-        </div>
-        <div className="glass rounded-3xl p-6">
-          <h2 className="text-lg font-semibold">Inferred Audience</h2>
-          <p className="mt-2 text-white/80">{audit.inferred_audience || "High-intent visitors comparing alternatives."}</p>
-        </div>
-      </section>
-
-      <section className="glass rounded-3xl p-6">
-        <h2 className="text-lg font-semibold">Top Issues</h2>
-        <ul className="mt-3 list-disc space-y-2 pl-5 text-white/80">
-          {issues.map((issue, idx) => (
-            <li key={`${issue}-${idx}`}>{issue}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="glass rounded-3xl p-6">
-        <h2 className="text-lg font-semibold">Quick Wins</h2>
-        <ul className="mt-3 space-y-2 text-white/80">
-          {quickWins.map((item, idx) => (
-            <li key={`${item}-${idx}`} className="flex items-start gap-2">
-              <span>✅</span>
-              <span>{item}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Priority Actions</h2>
-        <ReportTable rows={actions} />
-      </section>
-
-      <section className="glass rounded-3xl p-6">
-        <h2 className="text-lg font-semibold">Instant Fix</h2>
-        <div className="mt-3 space-y-4">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-white/50">Rewritten Headline</p>
-            <p className="mt-1 text-white/90">{audit.rewrite.hero_headline}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-wide text-white/50">Improved CTA</p>
-            <p className="mt-1 text-white/90">{audit.rewrite.cta}</p>
-          </div>
-          <button className="rounded-xl bg-gradient-to-r from-violet-500 to-blue-500 px-4 py-2 font-semibold text-white">
-            Fix this for me
-          </button>
-        </div>
-      </section>
-
-      <a
-        href={`/api/pdf?url=${encodeURIComponent(url)}&goal=${encodeURIComponent(goalForExport)}&targetAudience=${encodeURIComponent(audienceForExport)}`}
-        className="inline-flex rounded-xl border border-white/20 px-4 py-2 text-sm hover:bg-white/10"
-      >
-        Download PDF Report
-      </a>
     </main>
   );
 }
