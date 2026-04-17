@@ -60,6 +60,23 @@ function normalizeGoalForCopy(goal: string): string {
   return "increase conversions and revenue";
 }
 
+function sanitizeAudience(url: string, audience: string, fallbackAudience: string): string {
+  const hostAndAudience = `${new URL(url).hostname} ${audience}`.toLowerCase();
+  if (/siteaudit|audit|saas|software|tool|app/.test(hostAndAudience) && /leisure travelers|vacation|holiday/.test(hostAndAudience)) {
+    return "Founders, marketers, and growth teams improving conversion performance";
+  }
+  return audience || fallbackAudience;
+}
+
+function sanitizeRewriteHeadline(headline: string, audience: string, goal: string): string {
+  const normalizedGoal = normalizeGoalForCopy(goal);
+  const candidate = headline.trim();
+  if (!candidate || /^get\s+improve\b/i.test(candidate) || candidate.length < 24) {
+    return `Convert more ${audience.toLowerCase()} by clarifying your offer and reducing conversion friction to ${normalizedGoal}.`;
+  }
+  return candidate;
+}
+
 function inferAudienceFromContent(scraped: ScrapeResult): string {
   const host = new URL(scraped.url).hostname.toLowerCase();
   const text = `${scraped.url} ${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
@@ -265,16 +282,39 @@ ${scraped.bodyText.slice(0, 7000)}
     const parsed = auditSchema.safeParse(parseAiJsonLenient(ai.text));
     if (!parsed.success) throw new Error("Invalid AI JSON");
     const clampedScore = Math.max(0, Math.min(8.5, Number(parsed.data.score.toFixed(1))));
+    const safeAudience = sanitizeAudience(scraped.url, parsed.data.inferred_audience || resolvedAudience, resolvedAudience);
+    const safeGoal = parsed.data.inferred_goal || resolvedGoal;
+    const safeHeadline = sanitizeRewriteHeadline(parsed.data.rewrite?.hero_headline || "", safeAudience, safeGoal);
     return {
       ...parsed.data,
       score: clampedScore,
       estimated_impact: parsed.data.estimated_impact || `Fixing these could increase conversions by ${Math.round((10 - clampedScore) * 2)}-${Math.round((10 - clampedScore) * 3.2)}%.`,
-      inferred_goal: parsed.data.inferred_goal || resolvedGoal,
-      inferred_audience: parsed.data.inferred_audience || resolvedAudience,
-      rewrite: parsed.data.rewrite || {
-        hero_headline: `Turn more visitors into customers with a clearer offer for ${resolvedAudience.toLowerCase()}.`,
-        cta: "Start Converting Better"
+      inferred_goal: safeGoal,
+      inferred_audience: safeAudience,
+      rewrite: {
+        hero_headline: safeHeadline,
+        cta: parsed.data.rewrite?.cta || "Start Converting Better"
       },
+      quick_wins:
+        parsed.data.quick_wins.length > 0
+          ? parsed.data.quick_wins.map((win) => win.replace(/"[^"]{40,}"/g, `"${normalizeGoalForCopy(safeGoal)}"`))
+          : [
+              `Add one clear above-the-fold CTA aligned to "${normalizeGoalForCopy(safeGoal)}".`,
+              `Rewrite hero copy for one audience: ${safeAudience}.`,
+              "Add proof and trust near the main CTA."
+            ],
+      top_issues: parsed.data.top_issues.length > 0 ? parsed.data.top_issues : ["Offer clarity and CTA positioning are reducing conversion intent."],
+      priority_actions: parsed.data.priority_actions.length > 0 ? parsed.data.priority_actions : [
+        {
+          action: "Clarify hero value proposition in one sentence with concrete outcome",
+          impact: "High",
+          difficulty: "Low",
+          why_it_matters: "Visitors decide in seconds whether your offer is relevant and worth attention."
+        }
+      ],
+      money_leak: parsed.data.money_leak || "Revenue leaks when users do not get trust + action clarity in the first screen.",
+      verdict: parsed.data.verdict || "This site is underperforming due to weak conversion clarity in key decision moments.",
+      // keep provider diagnostic without leaking to UI
       error: ai.provider === "openai" ? undefined : "openai-fallback-provider-used"
     };
   } catch (error) {
