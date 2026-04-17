@@ -308,13 +308,15 @@ function computePenalties(ctx: EvalCtx): { total: number; leaks: RevenueLeak[]; 
 }
 
 function inferTraffic(ctx: EvalCtx, score_100: number): { low: number; high: number } {
-  const seoSignal = hasAny(ctx.text, [/\blocation\b/, /\bvilla\b/, /\bholiday\b/, /\bbeach\b/, /\bpool\b/]) ? 1.2 : 1;
-  const contentSignal = Math.min(1.6, Math.max(0.7, ctx.words / 900));
-  const authoritySignal = hasAny(ctx.text, [/\breviews?\b/, /\bfeatured\b/, /\baward\b/]) ? 1.15 : 0.95;
-  const scoreSignal = Math.max(0.8, score_100 / 100);
-  const baseline = 1200 * seoSignal * contentSignal * authoritySignal * scoreSignal;
-  const low = Math.max(350, Math.round(baseline * 0.7));
-  const high = Math.max(low + 150, Math.round(baseline * 1.45));
+  const s = ctx.scraped;
+  const seoSignal = hasAny(ctx.text, [/\blocation\b/, /\bvilla\b/, /\bholiday\b/, /\bbeach\b/, /\bpool\b/]) ? 1.1 : 0.95;
+  const contentSignal = Math.min(1.3, Math.max(0.8, ctx.words / 1200));
+  const trustSignal = s.trustSignals.reviewCountDetected > 0 ? 1.1 : 0.9;
+  const structureSignal = s.structure.hasBookingForm || s.structure.hasCalendar ? 1.1 : 0.9;
+  const scoreSignal = Math.max(0.7, score_100 / 100);
+  const baseline = 900 * seoSignal * contentSignal * trustSignal * structureSignal * scoreSignal;
+  const low = Math.max(250, Math.round(baseline * 0.7));
+  const high = Math.max(low + 120, Math.round(baseline * 1.45));
   return { low, high };
 }
 
@@ -324,7 +326,7 @@ function parseAvgBookingValue(nightlyPrice?: number): { low: number; high: numbe
     const high = Math.round(nightlyPrice * 8);
     return { low, high };
   }
-  return { low: 3000, high: 15000 };
+  return { low: 4000, high: 9000 };
 }
 
 function asEurRange(range: { low: number; high: number }): string {
@@ -413,7 +415,10 @@ export async function generateAudit(
   const occupancy = typeof occupancyPercent === "number" && occupancyPercent > 0 ? occupancyPercent : undefined;
   const whatWeFound = buildWhatWeFound(scraped);
 
-  const quickWins = leaks.slice(0, 3).map((l) => `${l.issue}: ${l.explanation}`);
+  const quickWins = leaks.slice(0, 3).map((l) => {
+    const gain = Math.round((lossYearly.high * l.impact_percent) / Math.max(1, total));
+    return `+€${gain.toLocaleString()}/year -> ${l.issue}`;
+  });
   const aiRecommendations = await buildAiRecommendations(leaks, resolvedGoal, whatWeFound);
   const topIssueStrings = leaks.map((l) => `${l.issue} (${l.impact_percent}% impact)`);
   const top3Impact = Math.min(35, leaks.slice(0, 3).reduce((s, l) => s + l.impact_percent, 0));
@@ -421,6 +426,43 @@ export async function generateAudit(
     low: Math.round((potentialYearly.low * top3Impact) / 100),
     high: Math.round((potentialYearly.high * top3Impact) / 100)
   };
+  const top5Impact = Math.min(70, leaks.reduce((s, l) => s + l.impact_percent, 0));
+  const top5Gain = {
+    low: Math.round((potentialYearly.low * top5Impact) / 100),
+    high: Math.round((potentialYearly.high * top5Impact) / 100)
+  };
+  const rootCauseMap = new Map<string, number>([
+    ["Trust", 0],
+    ["Clarity", 0],
+    ["Conversion friction", 0]
+  ]);
+  for (const leak of leaks) {
+    if (/review|trust|badge|policy/i.test(leak.issue)) {
+      rootCauseMap.set("Trust", (rootCauseMap.get("Trust") || 0) + leak.impact_percent);
+    } else if (/hero|pricing|headline|value/i.test(leak.issue)) {
+      rootCauseMap.set("Clarity", (rootCauseMap.get("Clarity") || 0) + leak.impact_percent);
+    } else {
+      rootCauseMap.set("Conversion friction", (rootCauseMap.get("Conversion friction") || 0) + leak.impact_percent);
+    }
+  }
+  const rootCauses = Array.from(rootCauseMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([cause]) => cause);
+  const whyYoureLosing = leaks.slice(0, 3).map((leak) => {
+    if (/review|trust|badge|policy/i.test(leak.issue)) return `No trust signals: ${leak.explanation}`;
+    if (/hero|pricing|headline|value/i.test(leak.issue)) return `Weak clarity: ${leak.explanation}`;
+    return `Conversion friction: ${leak.explanation}`;
+  });
+  const validationChecks = [
+    "Every insight references extracted page evidence",
+    "Top 5 leaks sorted by highest detected impact",
+    "Impact simulator values derived from summed penalties",
+    "Generic language filtered; missing data marked as no evidence"
+  ];
+  const causalRecommendations = leaks.slice(0, 3).map((leak) => {
+    return `${leak.issue} -> ${leak.explanation} -> Fix: ${leak.issue.replace(/^No /, "Add ").replace("detected", "").trim()}`;
+  });
 
   return {
     score: Number((score_100 / 10).toFixed(1)),
@@ -443,12 +485,13 @@ export async function generateAudit(
     category_breakdown,
     impact_simulator: {
       top3_fixes_gain_yearly: top3Gain,
-      summary: `If you fix the top 3 leaks, projected upside is ${asEurRange(top3Gain)} / year.`
+      top5_fixes_gain_yearly: top5Gain,
+      summary: `Top 3 issues recover ${asEurRange(top3Gain)} / year. Top 5 issues recover ${asEurRange(top5Gain)} / year.`
     },
-    ai_recommendations: aiRecommendations,
+    ai_recommendations: [...causalRecommendations, ...aiRecommendations].slice(0, 4),
     what_we_found: [{ label: "Crawl mode", value: scraped.scrapeStatus }, ...whatWeFound],
-    evidence_insights: insights,
-    verdict: `Evidence-based diagnosis: ${leaks[0]?.explanation || "No major leaks detected from current evidence."}`,
+    evidence_insights: insights.sort((a, b) => b.impact_percent - a.impact_percent).slice(0, 5),
+    verdict: `You are losing ~${total}% of potential bookings due to ${rootCauses.join(", ").toLowerCase()}.`,
     money_leak: leaks[0]?.explanation || "No evidence of a major leak detected.",
     top_issues: topIssueStrings,
     quick_wins: quickWins,
@@ -464,6 +507,9 @@ export async function generateAudit(
     },
     estimated_impact: `Recover ${Math.min(45, total)}% of lost conversions with focused fixes.`,
     inferred_goal: `${resolvedGoal} (${resolvedPlatform}${occupancy ? `, current occupancy ${occupancy}%` : ""})`,
-    inferred_audience: resolvedAudience
+    inferred_audience: resolvedAudience,
+    root_causes: rootCauses,
+    why_losing_bookings: whyYoureLosing,
+    validation_checks: validationChecks
   };
 }

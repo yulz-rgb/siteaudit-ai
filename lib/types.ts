@@ -49,11 +49,15 @@ export type AuditResult = {
   category_breakdown: CategoryScore[];
   impact_simulator: {
     top3_fixes_gain_yearly: { low: number; high: number };
+    top5_fixes_gain_yearly?: { low: number; high: number };
     summary: string;
   };
   ai_recommendations: string[];
   what_we_found: WebsiteEvidenceItem[];
   evidence_insights: EvidenceInsight[];
+  root_causes?: string[];
+  why_losing_bookings?: string[];
+  validation_checks?: string[];
   verdict: string;
   money_leak: string;
   top_issues: string[];
