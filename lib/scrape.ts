@@ -74,10 +74,16 @@ export async function extractFromHtml(url: string, html: string): Promise<Scrape
   const ctas = $(ctaSelectors)
     .slice(0, 50)
     .toArray()
-    .map((el) => cleanText($(el).text() || $(el).attr("value") || ""))
-    .filter((txt) => /book|reserve|availability|contact|inquire|enquire|check|call|get started/i.test(txt))
-    .slice(0, 20)
-    .map((text) => ({ text, selector: "unknown", aboveFold: false }));
+    .map((el) => {
+      const text = cleanText($(el).text() || $(el).attr("value") || "");
+      const parentPath = `${$(el).parents("header,nav,main,section").first().prop("tagName") || ""}`.toLowerCase();
+      const classHint = `${$(el).attr("class") || ""} ${$(el).attr("id") || ""}`.toLowerCase();
+      const likelyAboveFold = /header|nav/.test(parentPath) || /hero|sticky|top|masthead/.test(classHint);
+      return { text, selector: "unknown", aboveFold: likelyAboveFold };
+    })
+    .filter((cta) => cta.text.length > 0)
+    .filter((cta) => /book|reserve|availability|contact|inquire|enquire|check|call|get started/i.test(cta.text))
+    .slice(0, 20);
 
   const pricingTexts = dedupe(
     $("body")
@@ -223,10 +229,26 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapeResult> {
         .map((el) => {
           const text = (el.textContent || (el as HTMLInputElement).value || "").replace(/\s+/g, " ").trim();
           const rect = (el as HTMLElement).getBoundingClientRect();
+          const style = window.getComputedStyle(el as HTMLElement);
+          const hidden =
+            style.display === "none" ||
+            style.visibility === "hidden" ||
+            style.opacity === "0" ||
+            (el as HTMLElement).offsetParent === null;
+          const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+          const isVisible = !hidden && area > 90 && rect.bottom > 0;
+          const classHint = `${(el as HTMLElement).className || ""} ${(el as HTMLElement).id || ""}`.toLowerCase();
+          const parentHint = ((el as HTMLElement).closest("header,nav,[class*='hero'],[id*='hero'],[class*='sticky']") as HTMLElement | null)?.tagName?.toLowerCase() || "";
+          // Consider a CTA above fold if it's visible and appears in top viewport area
+          // or is attached to common top/sticky hero containers.
+          const aboveByViewport = rect.top <= window.innerHeight * 0.9;
+          const aboveByHint = /hero|sticky|top|masthead/.test(classHint) || /header|nav/.test(parentHint);
           const selector = (el as HTMLElement).tagName.toLowerCase();
-          return { text, selector, aboveFold: rect.top < window.innerHeight };
+          return { text, selector, aboveFold: isVisible && (aboveByViewport || aboveByHint), isVisible };
         })
+        .filter((cta) => cta.isVisible)
         .filter((cta) => /book|reserve|availability|contact|inquire|enquire|call|check|start/i.test(cta.text))
+        .map(({ isVisible: _isVisible, ...cta }) => cta)
         .slice(0, 25);
 
       const pageText = document.body?.innerText || "";
