@@ -9,6 +9,7 @@ export function ReportTable({ rows }: { rows: PriorityAction[] }) {
             <th className="px-4 py-3">Priority Action</th>
             <th className="px-4 py-3">Impact</th>
             <th className="px-4 py-3">Difficulty</th>
+            <th className="px-4 py-3">Why</th>
           </tr>
         </thead>
         <tbody>
@@ -17,6 +18,7 @@ export function ReportTable({ rows }: { rows: PriorityAction[] }) {
               <td className="px-4 py-3 text-white/90">{row.action}</td>
               <td className="px-4 py-3 text-white/70">{row.impact}</td>
               <td className="px-4 py-3 text-white/70">{row.difficulty}</td>
+              <td className="px-4 py-3 text-white/70">{row.why_it_matters}</td>
             </tr>
           ))}
         </tbody>

@@ -20,14 +20,15 @@ export function InputForm() {
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label htmlFor="goal" className="mb-2 block text-sm text-white/80">
-            Goal (optional)
+            What is your goal?
           </label>
           <input
             id="goal"
             name="goal"
             type="text"
-            placeholder="Generate more demo bookings"
+            placeholder="Get more bookings, leads, or sales"
             className="w-full rounded-xl border border-white/15 bg-black/30 px-4 py-3 text-white placeholder:text-white/40 focus:border-violet-400 focus:outline-none"
+            required
           />
         </div>
         <div>

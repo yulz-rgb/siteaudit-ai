@@ -4,21 +4,25 @@ import type { AuditResult, ScrapeResult } from "@/lib/types";
 
 const auditSchema = z.object({
   score: z.coerce.number().min(0).max(10),
-  diagnosis: z.string(),
+  verdict: z.string(),
+  money_leak: z.string(),
   top_issues: z.array(z.string()),
   quick_wins: z.array(z.string()),
+  estimated_impact: z.string().optional(),
   inferred_goal: z.string().optional(),
   inferred_audience: z.string().optional(),
-  location_culture_notes: z.string().optional(),
-  text_recommendations: z.array(z.string()).optional(),
-  image_recommendations: z.array(z.string()).optional(),
-  factor_coverage: z.coerce.number().min(1).max(200).optional(),
-  factor_findings: z.array(z.string()).optional(),
+  rewrite: z
+    .object({
+      hero_headline: z.string(),
+      cta: z.string()
+    })
+    .optional(),
   priority_actions: z.array(
     z.object({
       action: z.string(),
       impact: z.enum(["High", "Medium", "Low"]),
-      difficulty: z.enum(["Low", "Medium", "High"])
+      difficulty: z.enum(["Low", "Medium", "High"]),
+      why_it_matters: z.string()
     })
   )
 });
@@ -55,20 +59,14 @@ function inferAudienceFromContent(scraped: ScrapeResult): string {
   return "Visitors with high intent but limited attention span";
 }
 
-function inferGeoCultureNotes(scraped: ScrapeResult): string {
-  const host = new URL(scraped.url).hostname.toLowerCase();
-  if (host.endsWith(".de")) return "German-market visitors typically value trust signals, transparent pricing, and clear legal/contact details.";
-  if (host.endsWith(".fr")) return "French-market visitors often respond to premium presentation, clarity, and social proof near CTAs.";
-  if (host.endsWith(".co.uk")) return "UK visitors tend to prefer concise benefit-led messaging and low-friction conversion flows.";
-  return "Global audience assumptions applied: emphasize trust, clarity, localized cues, and direct conversion paths.";
-}
-
 function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience?: string): AuditResult {
+  const resolvedGoal = goal || inferGoalFromContent(scraped);
+  const resolvedAudience = targetAudience || inferAudienceFromContent(scraped);
   const text = `${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
   const ctaKeywords = ["book", "buy", "start", "get started", "contact", "call", "shop", "subscribe"];
   const trustKeywords = ["testimonial", "review", "trusted", "clients", "case study", "award", "years"];
-  const clarityKeywords = ["for ", "help", "solution", "service", "benefit", "we help", "designed for", "results"];
-  const urgencyKeywords = ["today", "now", "limited", "offer", "save", "free consultation", "book now"];
+  const clarityKeywords = ["for ", "help", "solution", "service", "benefit", "we help", "designed for", "results", "book"];
+  const urgencyKeywords = ["today", "now", "limited", "offer", "save", "book now", "request"];
   const frictionKeywords = ["learn more", "click here", "submit", "read more"];
 
   const hasMeta = scraped.metaDescription.length > 30;
@@ -82,17 +80,17 @@ function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience
   const imageAltCoverage =
     scraped.images.length === 0 ? 1 : scraped.images.filter((img) => img.alt.trim().length > 3).length / scraped.images.length;
 
-  let score = 3.8;
+  let score = 3.6;
   if (hasMeta) score += 1.2;
-  if (hasH1) score += 1;
-  if (hasCta) score += 1.4;
-  if (hasTrust) score += 1;
+  if (hasH1) score += 0.9;
+  if (hasCta) score += 1.1;
+  if (hasTrust) score += 0.8;
   if (hasClarity) score += 0.8;
-  if (h2Count >= 3) score += 0.6;
-  if (hasUrgency) score += 0.4;
+  if (h2Count >= 3) score += 0.4;
+  if (hasUrgency) score += 0.3;
   if (hasHighFrictionCta) score -= 0.6;
   if (imageAltCoverage > 0.6) score += 0.6;
-  score = Math.max(2.2, Math.min(9.1, Number(score.toFixed(1))));
+  score = Math.max(1.8, Math.min(7.6, Number(score.toFixed(1))));
 
   const topIssues: string[] = [];
   if (!hasCta) topIssues.push("Primary call-to-action is not clearly visible in the homepage copy.");
@@ -104,7 +102,7 @@ function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience
   if (hasHighFrictionCta) topIssues.push("CTA language is generic and high-friction; use action-specific outcome wording.");
   if (imageAltCoverage < 0.4) topIssues.push("Image alt text coverage is low, reducing accessibility and context.");
   const defaultIssues = [
-    "Message-to-CTA alignment can be tightened for stronger conversion intent.",
+    "Value proposition is not tied tightly enough to buyer intent at first glance.",
     "Offer differentiation is not explicit enough in above-the-fold copy.",
     "Conversion path can be simplified to reduce decision friction."
   ];
@@ -113,58 +111,49 @@ function buildFallbackAudit(scraped: ScrapeResult, goal?: string, targetAudience
   }
 
   const quickWins = [
-    `Add one clear above-the-fold CTA aligned to "${goal || "your primary conversion goal"}".`,
-    `Rewrite hero copy for one audience: ${targetAudience || "your ideal customer profile"}.`,
+    `Add one clear above-the-fold CTA aligned to "${resolvedGoal}".`,
+    `Rewrite hero copy for one audience: ${resolvedAudience}.`,
     "Place a trust block (reviews/logos/results) beside the primary CTA.",
-    "Use an urgency-focused CTA variant (for example: 'Book your consultation today')."
+    "Use an urgency-focused CTA variant (for example: 'Book your consultation today').",
+    "Show a concrete offer or package outcome before users scroll."
   ];
+
+  const estimatedImpactLow = Math.max(8, Math.round((10 - score) * 2));
+  const estimatedImpactHigh = estimatedImpactLow + 12;
 
   return {
     score,
-    diagnosis: "Conversion audit generated successfully with prioritized, actionable recommendations.",
+    verdict:
+      "This site is underperforming because the conversion intent is weaker than the attention required to trust and act.",
+    money_leak:
+      "Revenue is leaking in the first-screen experience where visitors do not get enough proof and urgency to commit.",
+    estimated_impact: `Fixing these issues could increase conversions by ${estimatedImpactLow}-${estimatedImpactHigh}%.`,
     top_issues: topIssues.slice(0, 5),
     quick_wins: quickWins,
-    inferred_goal: goal || inferGoalFromContent(scraped),
-    inferred_audience: targetAudience || inferAudienceFromContent(scraped),
-    location_culture_notes: inferGeoCultureNotes(scraped),
-    text_recommendations: [
-      "Rewrite hero headline to state one concrete outcome and one audience segment.",
-      "Use outcome-focused CTA copy instead of generic labels like Learn More.",
-      "Add a 3-bullet value proof block near the first CTA."
-    ],
-    image_recommendations: [
-      "Use a hero image that visually confirms the promised outcome.",
-      "Add authentic trust visuals (team, customer context, before/after proof).",
-      "Ensure all conversion-critical images have descriptive alt text."
-    ],
-    factor_coverage: 120,
-    factor_findings: [
-      "Messaging clarity: medium",
-      "CTA prominence: medium",
-      "Trust credibility: weak",
-      "Information hierarchy: medium",
-      "Mobile conversion readiness: medium"
-    ],
+    inferred_goal: resolvedGoal,
+    inferred_audience: resolvedAudience,
+    rewrite: {
+      hero_headline: `Get ${resolvedGoal.toLowerCase()} faster with a clearer offer and stronger trust signals.`,
+      cta: "Get Your Conversion Plan"
+    },
     priority_actions: [
       {
         action: "Clarify hero value proposition in one sentence with concrete outcome",
         impact: "High",
-        difficulty: "Low"
+        difficulty: "Low",
+        why_it_matters: "Visitors decide in seconds whether your offer is relevant and worth attention."
       },
       {
         action: "Introduce a single primary CTA and remove competing action paths",
         impact: "High",
-        difficulty: "Medium"
+        difficulty: "Medium",
+        why_it_matters: "Reducing choice friction increases click-through into revenue-driving steps."
       },
       {
-        action: "Replace generic CTA labels with specific action/outcome copy",
-        impact: "High",
-        difficulty: "Low"
-      },
-      {
-        action: "Add social proof near CTA (client logos, testimonials, measurable results)",
+        action: "Add trust proof directly next to CTA (reviews, case results, guarantees)",
         impact: "Medium",
-        difficulty: "Low"
+        difficulty: "Low",
+        why_it_matters: "Trust proof at decision points reduces hesitation and improves conversion intent."
       }
     ],
     error: "fallback-analysis-used"
@@ -176,50 +165,67 @@ export async function generateAudit(
   goal?: string,
   targetAudience?: string
 ): Promise<AuditResult> {
+  const resolvedGoal = goal || inferGoalFromContent(scraped);
+  const resolvedAudience = targetAudience || inferAudienceFromContent(scraped);
   const prompt = `
-TASK:
-- Analyse the provided website content
-- Identify conversion issues
-- Score the site (0–10)
-- Suggest high-ROI improvements
+SYSTEM:
+You are a senior conversion strategist.
 
-RULES:
-- No generic advice
-- Focus on revenue, UX, clarity
-- Be concise and direct
+You do NOT give generic advice.
+
+You diagnose websites like a revenue operator.
+
+INPUT:
+- website content
+- optional goal
+
+TASK:
+1. Identify:
+   - what this site is selling
+   - who it targets
+   - what action user should take
+2. Detect:
+   - where money is being lost
+   - what is unclear or weak
+   - what blocks conversion
+3. Assign REAL score:
+   - based on clarity, trust, friction, offer strength
+   - DO NOT inflate scores
+4. Think like you are responsible for revenue.
 
 OUTPUT FORMAT (STRICT JSON):
 {
   "score": number,
-  "diagnosis": string,
-  "top_issues": [string],
-  "quick_wins": [string],
-  "inferred_goal": string,
-  "inferred_audience": string,
-  "location_culture_notes": string,
-  "text_recommendations": [string],
-  "image_recommendations": [string],
-  "factor_coverage": number,
-  "factor_findings": [string],
+  "verdict": "Why this site is underperforming",
+  "money_leak": "Where revenue is being lost",
+  "top_issues": [ "specific, concrete problems only" ],
+  "quick_wins": [ "high ROI, actionable fixes" ],
   "priority_actions": [
     {
-      "action": string,
+      "action": "...",
       "impact": "High" | "Medium" | "Low",
-      "difficulty": "Low" | "Medium" | "High"
+      "difficulty": "Low" | "Medium" | "High",
+      "why_it_matters": "tie to conversion"
     }
-  ]
+  ],
+  "rewrite": {
+    "hero_headline": "...",
+    "cta": "..."
+  },
+  "estimated_impact": "Fixing these could increase conversions by X-Y%",
+  "inferred_goal": "...",
+  "inferred_audience": "..."
 }
 
-MANDATORY ANALYSIS REQUIREMENTS:
-- Infer the website's most likely business model and revenue goal automatically from content.
-- Infer likely target audience even if the user did not provide one.
-- Consider location/culture context from domain/language cues.
-- Evaluate at least 100 conversion factors (clarity, trust, funnel friction, pricing signals, CTA strength, visual hierarchy, mobile cues, etc.).
-- Provide concrete text and image improvement recommendations.
+RULES:
+- No vague language
+- No generic advice
+- Every point must be specific
+- Keep score realistic and strict
 
 Website URL: ${scraped.url}
-Goal: ${goal || "Not provided"}
-Target Audience: ${targetAudience || "Not provided"}
+Goal: ${resolvedGoal}
+Audience Hint: ${resolvedAudience}
 Title: ${scraped.title}
 Meta description: ${scraped.metaDescription}
 Headings: ${JSON.stringify(scraped.headings)}
@@ -232,15 +238,17 @@ ${scraped.bodyText.slice(0, 7000)}
     const ai = await chatJson(prompt);
     const parsed = auditSchema.safeParse(parseAiJsonLenient(ai.text));
     if (!parsed.success) throw new Error("Invalid AI JSON");
+    const clampedScore = Math.max(0, Math.min(8.5, Number(parsed.data.score.toFixed(1))));
     return {
       ...parsed.data,
-      inferred_goal: parsed.data.inferred_goal || goal || inferGoalFromContent(scraped),
-      inferred_audience: parsed.data.inferred_audience || targetAudience || inferAudienceFromContent(scraped),
-      location_culture_notes: parsed.data.location_culture_notes || inferGeoCultureNotes(scraped),
-      text_recommendations: parsed.data.text_recommendations || [],
-      image_recommendations: parsed.data.image_recommendations || [],
-      factor_coverage: parsed.data.factor_coverage || 100,
-      factor_findings: parsed.data.factor_findings || [],
+      score: clampedScore,
+      estimated_impact: parsed.data.estimated_impact || `Fixing these could increase conversions by ${Math.round((10 - clampedScore) * 2)}-${Math.round((10 - clampedScore) * 3.2)}%.`,
+      inferred_goal: parsed.data.inferred_goal || resolvedGoal,
+      inferred_audience: parsed.data.inferred_audience || resolvedAudience,
+      rewrite: parsed.data.rewrite || {
+        hero_headline: `Turn more visitors into customers with a clearer offer for ${resolvedAudience.toLowerCase()}.`,
+        cta: "Start Converting Better"
+      },
       error: ai.provider === "openai" ? undefined : "openai-fallback-provider-used"
     };
   } catch (error) {

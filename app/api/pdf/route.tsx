@@ -36,7 +36,8 @@ export async function GET(req: NextRequest) {
 
         <View style={styles.section}>
           <Text style={styles.heading}>Score: {audit.score}/10</Text>
-          <Text>{audit.diagnosis}</Text>
+          <Text>{audit.verdict}</Text>
+          <Text style={{ marginTop: 4 }}>Money leak: {audit.money_leak}</Text>
         </View>
 
         <View style={styles.section}>
@@ -55,6 +56,12 @@ export async function GET(req: NextRequest) {
               - {win}
             </Text>
           ))}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.heading}>Instant Fix</Text>
+          <Text style={styles.item}>Headline: {audit.rewrite.hero_headline}</Text>
+          <Text style={styles.item}>CTA: {audit.rewrite.cta}</Text>
         </View>
       </Page>
     </Document>

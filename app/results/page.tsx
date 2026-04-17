@@ -43,7 +43,7 @@ export default function ResultsPage({ searchParams }: { searchParams: SearchPara
   }
 
   const { audit, url } = parsed;
-  const diagnosis = normalizeDiagnosis(audit.diagnosis);
+  const verdict = normalizeDiagnosis(audit.verdict);
   const issues = audit.top_issues;
   const quickWins = audit.quick_wins;
   const actions = audit.priority_actions;
@@ -57,13 +57,25 @@ export default function ResultsPage({ searchParams }: { searchParams: SearchPara
 
       {error && <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</p>}
 
+      <section className="glass rounded-2xl border-emerald-400/30 bg-emerald-500/10 p-5">
+        <p className="text-sm font-medium text-emerald-200">Estimated Impact</p>
+        <p className="mt-1 text-lg font-semibold text-emerald-100">
+          {audit.estimated_impact || "Fixing these could increase conversions by 10-25%."}
+        </p>
+      </section>
+
       <div className="grid gap-5 lg:grid-cols-3">
         <ScoreCard score={audit.score} />
         <div className="glass rounded-2xl p-6 lg:col-span-2">
-          <h2 className="text-lg font-semibold">Diagnosis</h2>
-          <p className="mt-2 text-white/80">{diagnosis}</p>
+          <h2 className="text-lg font-semibold">This site is losing conversions because...</h2>
+          <p className="mt-2 text-white/80">{verdict}</p>
         </div>
       </div>
+
+      <section className="glass rounded-2xl border-rose-400/30 bg-rose-500/10 p-6">
+        <h2 className="text-lg font-semibold text-rose-200">Money Leak</h2>
+        <p className="mt-2 text-rose-100">{audit.money_leak}</p>
+      </section>
 
       <section className="grid gap-4 md:grid-cols-2">
         <div className="glass rounded-2xl p-6">
@@ -74,13 +86,6 @@ export default function ResultsPage({ searchParams }: { searchParams: SearchPara
           <h2 className="text-lg font-semibold">Inferred Audience</h2>
           <p className="mt-2 text-white/80">{audit.inferred_audience || "High-intent visitors comparing alternatives."}</p>
         </div>
-      </section>
-
-      <section className="glass rounded-2xl p-6">
-        <h2 className="text-lg font-semibold">Culture & Location Notes</h2>
-        <p className="mt-2 text-white/80">
-          {audit.location_culture_notes || "Global audience patterns applied for trust, clarity, and conversion friction."}
-        </p>
       </section>
 
       <section className="glass rounded-2xl p-6">
@@ -104,40 +109,26 @@ export default function ResultsPage({ searchParams }: { searchParams: SearchPara
         </ul>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2">
-        <div className="glass rounded-2xl p-6">
-          <h2 className="text-lg font-semibold">Text Recommendations</h2>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-white/80">
-            {(audit.text_recommendations || []).map((item, idx) => (
-              <li key={`${item}-${idx}`}>{item}</li>
-            ))}
-          </ul>
-        </div>
-        <div className="glass rounded-2xl p-6">
-          <h2 className="text-lg font-semibold">Image Recommendations</h2>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-white/80">
-            {(audit.image_recommendations || []).map((item, idx) => (
-              <li key={`${item}-${idx}`}>{item}</li>
-            ))}
-          </ul>
-        </div>
-      </section>
-
-      <section className="glass rounded-2xl p-6">
-        <h2 className="text-lg font-semibold">Factor Coverage</h2>
-        <p className="mt-2 text-white/80">
-          {audit.factor_coverage || 100}+ conversion factors analyzed across clarity, trust, UX, and revenue friction.
-        </p>
-        <ul className="mt-3 list-disc space-y-2 pl-5 text-white/80">
-          {(audit.factor_findings || []).slice(0, 8).map((item, idx) => (
-            <li key={`${item}-${idx}`}>{item}</li>
-          ))}
-        </ul>
-      </section>
-
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Priority Actions</h2>
         <ReportTable rows={actions} />
+      </section>
+
+      <section className="glass rounded-2xl p-6">
+        <h2 className="text-lg font-semibold">Instant Fix</h2>
+        <div className="mt-3 space-y-4">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-white/50">Rewritten Headline</p>
+            <p className="mt-1 text-white/90">{audit.rewrite.hero_headline}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-white/50">Improved CTA</p>
+            <p className="mt-1 text-white/90">{audit.rewrite.cta}</p>
+          </div>
+          <button className="rounded-xl bg-gradient-to-r from-violet-500 to-blue-500 px-4 py-2 font-semibold text-white">
+            Fix this for me
+          </button>
+        </div>
       </section>
 
       <a

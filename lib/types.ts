@@ -2,21 +2,23 @@ export type PriorityAction = {
   action: string;
   impact: "High" | "Medium" | "Low";
   difficulty: "Low" | "Medium" | "High";
+  why_it_matters: string;
 };
 
 export type AuditResult = {
   score: number;
-  diagnosis: string;
+  verdict: string;
+  money_leak: string;
   top_issues: string[];
   quick_wins: string[];
   priority_actions: PriorityAction[];
+  rewrite: {
+    hero_headline: string;
+    cta: string;
+  };
+  estimated_impact: string;
   inferred_goal?: string;
   inferred_audience?: string;
-  location_culture_notes?: string;
-  text_recommendations?: string[];
-  image_recommendations?: string[];
-  factor_coverage?: number;
-  factor_findings?: string[];
   error?: string;
 };
 
