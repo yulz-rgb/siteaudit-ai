@@ -2,6 +2,8 @@ import { normalizeUrl, withTimeout } from "@/lib/utils";
 import type { ScrapeResult } from "@/lib/types";
 
 const SCRAPE_ERROR_MESSAGE = "Website scraping failed. The website may block automated access.";
+const DEFAULT_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 async function launchBrowser() {
   const { chromium } = await import("playwright");
@@ -54,42 +56,53 @@ export async function extractFromHtml(url: string, html: string): Promise<Scrape
       alt: $(el).attr("alt") ?? ""
     }));
 
+  const title = cleanText($("title").first().text());
+  const metaDescription = cleanText($('meta[name="description"]').attr("content") ?? "");
   const bodyText = cleanText($("body").text());
-  if (bodyText.length < 30) {
+  const synthesizedBody = [title, metaDescription, ...headings.h1, ...headings.h2, ...headings.h3]
+    .map(cleanText)
+    .filter(Boolean)
+    .join(" ");
+  const finalBodyText = bodyText.length >= 30 ? bodyText : synthesizedBody;
+
+  if (!finalBodyText) {
     throw new Error("Could not extract enough page content.");
   }
 
   return {
     url,
-    title: cleanText($("title").first().text()),
-    metaDescription: cleanText($('meta[name="description"]').attr("content") ?? ""),
-    bodyText,
+    title,
+    metaDescription,
+    bodyText: finalBodyText,
     headings,
     images
   };
 }
 
 async function scrapeWithHtmlFetch(url: string): Promise<ScrapeResult> {
-  try {
-    const response = await withTimeout(
-      fetch(url, {
-        headers: {
-          "user-agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        }
-      }),
-      8000
-    );
+  const variants = Array.from(
+    new Set([url, url.replace(/^https:\/\//i, "http://"), url.replace(/^http:\/\//i, "https://")])
+  );
 
-    if (!response.ok) {
-      throw new Error(SCRAPE_ERROR_MESSAGE);
+  for (const variant of variants) {
+    try {
+      const response = await withTimeout(
+        fetch(variant, {
+          headers: { "user-agent": DEFAULT_UA },
+          redirect: "follow"
+        }),
+        9000
+      );
+
+      if (!response.ok) continue;
+      const html = await response.text();
+      return extractFromHtml(variant, html);
+    } catch {
+      continue;
     }
-
-    const html = await response.text();
-    return extractFromHtml(url, html);
-  } catch {
-    throw new Error(SCRAPE_ERROR_MESSAGE);
   }
+
+  throw new Error(SCRAPE_ERROR_MESSAGE);
 }
 
 async function scrapeWithPlaywright(url: string): Promise<ScrapeResult> {
@@ -142,12 +155,15 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapeResult> {
 export async function scrapeHomepage(rawUrl: string): Promise<ScrapeResult> {
   const url = normalizeUrl(rawUrl);
 
-  // On Vercel, HTML fetch parsing is often more reliable than launching Chromium in serverless.
-  if (process.env.VERCEL && process.env.FORCE_PLAYWRIGHT !== "1") {
-    return scrapeWithHtmlFetch(url);
-  }
-
   try {
+    // On Vercel, try fetch parsing first for speed/reliability, then fallback to Playwright.
+    if (process.env.VERCEL && process.env.FORCE_PLAYWRIGHT !== "1") {
+      try {
+        return await scrapeWithHtmlFetch(url);
+      } catch {
+        return await scrapeWithPlaywright(url);
+      }
+    }
     return await scrapeWithPlaywright(url);
   } catch {
     return scrapeWithHtmlFetch(url);
