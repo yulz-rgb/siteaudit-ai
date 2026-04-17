@@ -49,7 +49,11 @@ export async function runAudit(formData: FormData) {
     );
 
     redirect(`/results?data=${payload}`);
-  } catch {
+  } catch (error) {
+    const maybeRedirect = error as { digest?: string };
+    if (typeof maybeRedirect?.digest === "string" && maybeRedirect.digest.startsWith("NEXT_REDIRECT")) {
+      throw error;
+    }
     const message = "Audit failed. Please retry or try a different website.";
     redirect(`/results?error=${encodeURIComponent(message)}`);
   }
