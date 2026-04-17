@@ -1,10 +1,15 @@
 import Link from "next/link";
 import { ReportTable } from "@/components/ReportTable";
 import { ScoreCard } from "@/components/ScoreCard";
-import type { AuditResult } from "@/lib/types";
+import { scrapeHomepage } from "@/lib/scrape";
+import { generateAudit } from "@/lib/audit";
+import type { AuditResult, ScrapeResult } from "@/lib/types";
 
 type SearchParams = {
   data?: string;
+  url?: string;
+  goal?: string;
+  targetAudience?: string;
   error?: string;
 };
 
@@ -15,12 +20,12 @@ function normalizeDiagnosis(diagnosis: string): string {
   return diagnosis;
 }
 
-function parseAuditData(data?: string): { url: string; audit: AuditResult } | null {
+function parseAuditData(data?: string): { url: string; goal?: string; targetAudience?: string; audit: AuditResult } | null {
   if (!data) return null;
   const tryParse = (value: string) => {
-    const parsed = JSON.parse(value) as { url?: string; audit?: AuditResult };
+    const parsed = JSON.parse(value) as { url?: string; goal?: string; targetAudience?: string; audit?: AuditResult };
     if (!parsed?.url || !parsed?.audit) return null;
-    return { url: parsed.url, audit: parsed.audit };
+    return { url: parsed.url, goal: parsed.goal, targetAudience: parsed.targetAudience, audit: parsed.audit };
   };
 
   try {
@@ -50,8 +55,35 @@ function parseAuditData(data?: string): { url: string; audit: AuditResult } | nu
   }
 }
 
-export default function ResultsPage({ searchParams }: { searchParams: SearchParams }) {
-  const parsed = parseAuditData(searchParams.data);
+function fallbackScrape(url: string): ScrapeResult {
+  const hostname = new URL(url).hostname;
+  return {
+    url,
+    title: hostname,
+    metaDescription: "",
+    bodyText: `Homepage content could not be scraped for ${hostname}. Generate a best-effort conversion audit from the available context.`,
+    headings: { h1: [], h2: [], h3: [] },
+    images: []
+  };
+}
+
+async function buildAuditFromQuery(searchParams: SearchParams): Promise<{ url: string; audit: AuditResult } | null> {
+  if (!searchParams.url) return null;
+  const goal = searchParams.goal || "";
+  const targetAudience = searchParams.targetAudience || "";
+  let scraped: ScrapeResult;
+  try {
+    scraped = await scrapeHomepage(searchParams.url);
+  } catch {
+    scraped = fallbackScrape(searchParams.url);
+  }
+  const audit = await generateAudit(scraped, goal, targetAudience);
+  return { url: searchParams.url, audit };
+}
+
+export default async function ResultsPage({ searchParams }: { searchParams: SearchParams }) {
+  const parsedFromData = parseAuditData(searchParams.data);
+  const parsed = parsedFromData || (await buildAuditFromQuery(searchParams));
   const error = searchParams.error;
 
   if (!parsed) {
@@ -158,7 +190,12 @@ export default function ResultsPage({ searchParams }: { searchParams: SearchPara
       </section>
 
       <a
-        href={`/api/pdf?data=${encodeURIComponent(searchParams.data || "")}`}
+        href={`/api/pdf?data=${encodeURIComponent(
+          JSON.stringify({
+            url,
+            audit
+          })
+        )}`}
         className="inline-flex rounded-xl border border-white/20 px-4 py-2 text-sm hover:bg-white/10"
       >
         Download PDF Report
