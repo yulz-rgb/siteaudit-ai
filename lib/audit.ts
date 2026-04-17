@@ -51,11 +51,23 @@ function inferGoalFromContent(scraped: ScrapeResult): string {
 }
 
 function inferAudienceFromContent(scraped: ScrapeResult): string {
+  const host = new URL(scraped.url).hostname.toLowerCase();
   const text = `${scraped.url} ${scraped.title} ${scraped.metaDescription} ${scraped.bodyText}`.toLowerCase();
-  if (/wedding|event|florist|venue/.test(text)) return "Couples and event planners seeking premium event services";
-  if (/villa|travel|holiday|vacation|stay/.test(text)) return "Leisure travelers comparing accommodation options";
-  if (/b2b|enterprise|team|company|business/.test(text)) return "Business buyers evaluating ROI and trust quickly";
-  if (/beauty|spa|salon|clinic/.test(text)) return "Consumers evaluating quality, trust, and booking convenience";
+  if (/amazon|shop|store|checkout|cart|product/.test(host + " " + text)) {
+    return "Online shoppers comparing price, trust, and delivery confidence";
+  }
+  if (/villa|travel|holiday|vacation|stay|reservation|booking/.test(text)) {
+    return "Leisure travelers comparing accommodation options";
+  }
+  if (/wedding|event|florist|venue/.test(text)) {
+    return "Couples and event planners seeking premium event services";
+  }
+  if (/b2b|enterprise|team|company|business/.test(text)) {
+    return "Business buyers evaluating ROI and trust quickly";
+  }
+  if (/beauty|spa|salon|clinic/.test(text)) {
+    return "Consumers evaluating quality, trust, and booking convenience";
+  }
   return "Visitors with high intent but limited attention span";
 }
 
