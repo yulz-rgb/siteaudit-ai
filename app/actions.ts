@@ -54,8 +54,35 @@ export async function runAudit(formData: FormData) {
     if (typeof maybeRedirect?.digest === "string" && maybeRedirect.digest.startsWith("NEXT_REDIRECT")) {
       throw error;
     }
-    const message = "Audit failed. Please retry or try a different website.";
-    redirect(`/results?error=${encodeURIComponent(message)}`);
+    const safeUrl = parsedUrl || url || "unknown-site";
+    const fallbackPayload = encodeURIComponent(
+      JSON.stringify({
+        url: safeUrl,
+        goal,
+        targetAudience,
+        audit: {
+          score: 0,
+          diagnosis:
+            "We could not complete the full automated crawl, so this is a best-effort fallback report. Try again for a deeper audit.",
+          top_issues: [
+            "Automated crawl did not return full homepage content.",
+            "Core messaging and CTA hierarchy could not be fully verified.",
+            "Trust and clarity signals may need manual review."
+          ],
+          quick_wins: [
+            "Add one clear above-the-fold CTA tied to your primary goal.",
+            "Tighten headline and subheadline to one audience and one promise.",
+            "Add trust proof near CTA (logos, metrics, testimonials)."
+          ],
+          priority_actions: [
+            { action: "Clarify value proposition in hero section", impact: "High", difficulty: "Low" },
+            { action: "Improve CTA contrast and placement", impact: "High", difficulty: "Low" },
+            { action: "Add social proof near conversion points", impact: "Medium", difficulty: "Low" }
+          ]
+        }
+      })
+    );
+    redirect(`/results?data=${fallbackPayload}&error=${encodeURIComponent("Limited data mode: fallback report generated.")}`);
   }
 }
 
